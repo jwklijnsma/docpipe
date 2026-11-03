@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docpipe"
+version = "3.0.0"
+description = "Multi-agent documentation generator backed by Ollama"
+requires-python = ">=3.10"
+dependencies = ["requests>=2.31", "pyyaml>=6.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+docpipe = "docpipe.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["docpipe*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

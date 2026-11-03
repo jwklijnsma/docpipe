@@ -1,0 +1,102 @@
+# docpipe v3 configuration. Copy to config.yaml and edit.
+# Every key is optional; `docpipe run --dir PATH --ollama URL` works without a config.
+
+llm:
+  endpoints:
+    - http://ollama.example.internal:11434          # your Ollama server(s); add more to load-balance
+  model: qwen2.5:14b                  # exactly as `ollama list` shows it
+  # translator_model: qwen2.5:14b     # unset = reuse `model` (no model swap, no reload)
+  num_ctx_buckets: [8192, 16384]      # fewer buckets = fewer model reloads
+  max_output_tokens: 4096
+  keep_alive: 60m
+  request_timeout: 900
+  parallel_per_endpoint: 1            # set to the server's OLLAMA_NUM_PARALLEL
+  # ca_bundle: /etc/pki/tls/certs/ca-bundle.crt
+
+pipeline:
+  output_dir: ./site/docs             # pages land in docs/<lang>/<output>
+  state_dir: ./.docpipe               # cache, errors.jsonl, last_run.json, watch state
+  workers: 2
+
+  # --- languages ---
+  primary_language: nl                # write directly in Dutch …
+  translate: true
+  languages: [en]                     # … and translate to English
+  formality: informal                 # informal = je-vorm, formal = u-vorm
+  glossary:
+    nl:
+      sign in: inloggen
+      troubleshooting: problemen oplossen
+  keep_terms: [OpenShift, Argo CD, Keycloak]   # never translated (cluster, namespace, pod… are built in)
+
+  # --- house conventions, given to the writer for every source ---
+  kube_cli: oc
+  context: |
+    Platform: OpenShift 4 clusters run by the platform team. Teams deploy through Argo CD;
+    nobody applies manifests by hand. Routes use *.apps.<cluster>.example.nl.
+    Secrets come from Vault via the External Secrets Operator.
+    Questions: open a ticket in the service portal.
+
+  # --- quality / speed ---
+  input_token_budget: 6000            # keeps articles in the 8k context bucket
+  max_reference_rows: 400             # values / resources tables appended to each page
+  qa_rounds: 3
+  semantic_qa: true                   # LLM review of translations (off = faster)
+  language_check: true                # flags sections left in the wrong language
+  redact_secrets: true                # passwords, tokens, Secret data, keys, vault blobs
+  banned_terms:                       # per source type; ansible docs never mention Ansible
+    ansible: [ansible, playbook, puppet, chef, terraform, saltstack]
+
+sources:
+  # type is auto-detected (helm | k8s | argocd | ansible | git | local) unless set.
+  - name: owncast
+    url: https://gitlab.example.nl/platform/charts.git
+    subdir: charts/owncast            # chart inside a monorepo
+    output: applicaties/streaming/owncast.md
+    context: Installed for tenants via the 'media' Argo CD project.
+
+  - name: webshop
+    url: https://gitlab.example.nl/team-shop/webshop-deploy.git
+    output: applicaties/webshop.md    # Kustomize base + overlays/{test,acc,prod}
+
+  - name: platform-apps
+    url: https://gitlab.example.nl/platform/gitops.git
+    type: argocd
+    output: platform/argocd-applicaties.md
+
+  - name: owncast-vm
+    type: ansible
+    url: https://gitlab.example.nl/devops/owncast-docker-playbook.git
+    branch: master
+    output: marketplace/streaming/owncast-vm.md
+
+site:
+  enabled: true
+  site_name: Platform Documentatie
+  # site_url: https://docs.example.nl/
+  # repo_url: https://gitlab.example.nl/platform/docs
+  categories:                         # nav titles for output folders
+    applicaties/streaming: Streaming
+    platform: Platform
+
+publish:
+  enabled: false                      # true = publish after every run / watch
+  repo: https://gitlab.example.nl/platform/docs.git
+  # project: platform/docs            # derived from repo when unset
+  token_env: GITLAB_TOKEN             # api + write_repository scope
+  base_branch: main
+  branch: docpipe/update              # rolling MR branch, rebuilt every run
+  target_dir: docs
+  labels: [documentation, docpipe]
+  reviewer_ids: []                    # GitLab user ids
+  prune: false                        # remove pages of sources no longer configured
+
+gitlab:
+  enabled: false
+  url: https://gitlab.example.nl
+  token_env: GITLAB_TOKEN
+  branches: [master, main]
+  projects:
+    - {path: platform/charts, source: owncast}
+    - {path: team-shop/webshop-deploy, source: webshop}
+    - {path: platform/gitops, source: platform-apps}

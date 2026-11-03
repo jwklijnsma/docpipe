@@ -1,0 +1,15 @@
+# systemd alternative to cron. Install both files to /etc/systemd/system/, then:
+#   systemctl daemon-reload && systemctl enable --now docpipe-watch.timer
+[Unit]
+Description=docpipe: rebuild docs for changed GitLab projects
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=docpipe
+WorkingDirectory=/opt/docpipe
+# /etc/docpipe/env contains GITLAB_TOKEN=... and DOCPIPE_GIT_TOKEN=...
+EnvironmentFile=/etc/docpipe/env
+ExecStart=/opt/docpipe/.venv/bin/docpipe -c /opt/docpipe/config.yaml --no-color watch --publish
+TimeoutStartSec=4h

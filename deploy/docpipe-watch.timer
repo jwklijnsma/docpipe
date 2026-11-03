@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly docpipe watch
+
+[Timer]
+OnCalendar=*-*-* 02:17
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

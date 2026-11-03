@@ -1,0 +1,80 @@
+# Nightly `docpipe watch --publish` on OpenShift.
+#
+#   oc create secret generic docpipe-tokens \
+#     --from-literal=GITLAB_TOKEN=glpat-...        # api + read/write_repository
+#     --from-literal=DOCPIPE_GIT_TOKEN=glpat-...   # read_repository on source repos (optional)
+#   oc apply -f deploy/openshift-cronjob.yaml
+#
+# The PVC keeps the cache and generated pages between runs, so unchanged
+# sources cost nothing. Results arrive as one rolling merge request in the docs repo.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: docpipe-config
+data:
+  config.yaml: |
+    llm:
+      endpoints: [http://ollama.example.internal:11434]
+      model: qwen2.5:14b
+    pipeline:
+      output_dir: /data/docs
+      state_dir: /data/state
+      primary_language: nl
+      translate: true
+      languages: [en]
+    site:
+      enabled: true
+      site_name: Documentatie
+    publish:
+      repo: https://gitlab.example.nl/platform/docs.git
+    sources: []        # see config.example.yaml
+    gitlab:
+      enabled: true
+      url: https://gitlab.example.nl
+      projects: []
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: docpipe-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: docpipe-watch
+spec:
+  schedule: "17 2 * * *"
+  timeZone: Europe/Amsterdam
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 14400
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: docpipe
+              image: image-registry.openshift-image-registry.svc:5000/docs/docpipe:3
+              args: ["-c", "/config/config.yaml", "watch", "--publish"]
+              envFrom:
+                - secretRef:
+                    name: docpipe-tokens
+              resources:
+                requests: {cpu: 100m, memory: 256Mi}
+                limits: {memory: 1Gi}
+              volumeMounts:
+                - {name: config, mountPath: /config}
+                - {name: data, mountPath: /data}
+          volumes:
+            - name: config
+              configMap: {name: docpipe-config}
+            - name: data
+              persistentVolumeClaim: {claimName: docpipe-data}

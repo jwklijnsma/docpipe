@@ -1,0 +1,19 @@
+# Build:  podman build -f deploy/Containerfile -t docpipe:3 .
+# Run:    podman run --rm -v $PWD:/work:Z -e DOCPIPE_OLLAMA_URL=http://ollama.example.internal:11434 \
+#           docpipe:3 run --dir /work/my-role
+FROM registry.access.redhat.com/ubi9/python-311:latest
+
+USER 0
+RUN dnf install -y --nodocs git-core && dnf clean all
+USER 1001
+
+WORKDIR /opt/app-root/src
+COPY pyproject.toml ./
+COPY docpipe ./docpipe
+RUN pip install --no-cache-dir .
+
+# OpenShift runs with a random UID in group 0; /work must be group-writable.
+WORKDIR /work
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["docpipe", "--log-format", "json"]
+CMD ["--help"]
