@@ -146,6 +146,11 @@ class FakeOllama(_Server):
             return json.dumps({"passed": True, "issues": []})
         doc = re.search(r"=== DOCUMENT ===\n(.*)\n=== END ===", user, re.S)
         dutch = "into Dutch" in system or "entire document in Dutch" in system or "in Dutch" in system
+        if "translator" in system and doc and "into English" in system:
+            out = ARTICLE
+            for i, block in enumerate(re.findall(r"```.*?```", ARTICLE, re.S)):
+                out = out.replace(block, f"⟦CODE{i}⟧")
+            return out
         if "translator" in system and doc:
             if dutch:
                 # Reproduce the placeholders the real model must keep.

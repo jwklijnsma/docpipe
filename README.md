@@ -12,7 +12,24 @@ source ─▶ scan + redact secrets ─▶ cache? ─▶ extract facts ─▶ se
        ─▶ index + mkdocs.yml ─▶ docs repo branch ─▶ merge request
 ```
 
-## Quick start
+## Easiest: orchestrator.py
+
+No install needed, only `requests` and `pyyaml`. Edit `SETTINGS` at the top of
+`orchestrator.py` (Ollama URL, model, language) once, then:
+
+```bash
+python3 orchestrator.py check                         # is the Ollama server ready?
+python3 orchestrator.py ./charts/owncast              # document a folder
+python3 orchestrator.py https://gitlab.example.nl/platform/charts.git --subdir charts/owncast
+python3 orchestrator.py ./my-role --lang en --fast    # translate too, fewer LLM calls
+python3 orchestrator.py                               # asks what to document
+```
+
+Pages land in `output/docs/<language>/`, with `output/mkdocs.yml` for a preview
+(`cd output && mkdocs serve`). The docstring at the top of the file lists each
+step and the module that does it.
+
+## Quick start (installed command)
 
 ```bash
 pip install .
@@ -130,6 +147,6 @@ Unchanged sources are skipped by the cache without any LLM call.
 pip install -e '.[test]' mkdocs-material mkdocs-static-i18n && pytest
 ```
 
-32 tests run against an in-process fake Ollama and fake GitLab API, including a
+36 tests run against an in-process fake Ollama and fake GitLab API, including a
 real `mkdocs build --strict` of a bilingual site and the full merge-request flow
 against a local bare repository.
