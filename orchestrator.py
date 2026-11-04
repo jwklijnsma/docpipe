@@ -3,15 +3,15 @@
 orchestrator.py — the easy way to run docpipe.
 
 No `pip install` needed: only `requests` and `pyyaml`.
-Edit SETTINGS below once, then:
 
+    python3 orchestrator.py init                              # create config.yaml, then edit it
+    python3 orchestrator.py check                             # test the Ollama server
     python3 orchestrator.py ./charts/owncast                  # a local folder
     python3 orchestrator.py https://gitlab.example.nl/platform/charts.git --subdir charts/owncast
     python3 orchestrator.py ./my-role --lang en               # also translate to English
     python3 orchestrator.py ./my-role --fast                  # quicker, less QA
-    python3 orchestrator.py                                   # asks what to document
-    python3 orchestrator.py --config config.yaml              # all sources from a config file
-    python3 orchestrator.py check                             # test the Ollama server
+    python3 orchestrator.py                                   # sources from config.yaml, or asks
+    python3 orchestrator.py --config other.yaml ./my-role     # a different config file
 
 What happens, step by step (the agents live in docpipe/):
 
@@ -25,12 +25,13 @@ What happens, step by step (the agents live in docpipe/):
     8. site      index pages + mkdocs.yml                     docpipe/site.py
     9. publish   merge request in the docs repo (optional)    docpipe/publish.py
 
-Without --config, the SETTINGS below are used. With --config, the config file is
-used instead (see config.example.yaml). Command-line flags always win.
+Settings: config.yaml in the current folder is always used when it exists
+(`init` creates one; config.example.yaml shows every option). Without it, the
+SETTINGS below are used. Command-line flags always win.
 """
 
 # =============================================================================
-#  SETTINGS — edit these
+#  SETTINGS — fallback when there is no config.yaml (and the defaults for `init`)
 # =============================================================================
 SETTINGS = {
     "ollama_url": "http://localhost:11434",   # your Ollama server, e.g. http://192.168.1.50:11434
@@ -101,6 +102,59 @@ def source_from_target(target: str, args) -> Source:
     return Source(name=name, path=str(path), subdir=args.subdir, output=args.output)
 
 
+INIT_TEMPLATE = """\
+# docpipe settings. Every option with explanation: config.example.yaml
+
+llm:
+  endpoints:
+    - {ollama_url}          # your Ollama server
+  model: {model}            # exactly as `ollama list` shows it
+  num_ctx_buckets: [8192, 16384]
+  keep_alive: 60m
+
+pipeline:
+  output_dir: {output_dir}
+  state_dir: {state_dir}
+  primary_language: {language}        # language to write in
+  translate: {translate}
+  languages: {translate_to}             # e.g. [en]
+  formality: {formality}       # informal = je-vorm, formal = u-vorm
+  context: |                   # house rules for every page
+    {context}
+
+site:
+  enabled: {site}
+  site_name: {site_name}
+
+# Sources for `python3 orchestrator.py` without a folder/URL argument.
+sources: []
+#  - name: owncast
+#    url: https://gitlab.example.nl/platform/charts.git
+#    subdir: charts/owncast
+#    output: apps/owncast.md
+
+publish:
+  enabled: false
+  repo: "{publish_repo}"        # docs repo for merge requests
+"""
+
+
+def init_config(path: Path, log: StageLogger) -> int:
+    if path.exists():
+        log.error("%s already exists — edit it, or remove it first", path)
+        return 2
+    s = SETTINGS
+    path.write_text(INIT_TEMPLATE.format(
+        ollama_url=s["ollama_url"], model=s["model"], output_dir=s["output_dir"],
+        state_dir=str(Path(s["output_dir"]).parent / ".docpipe"), language=s["language"],
+        translate=str(bool(s["translate_to"])).lower(), translate_to="[" + ", ".join(s["translate_to"]) + "]",
+        formality=s["formality"], context=s["context"] or "Write for the teams that use this platform.",
+        site=str(bool(s["site"])).lower(), site_name=s["site_name"], publish_repo=s["publish_repo"]))
+    load_config(str(path))           # make sure what we wrote is valid
+    log.success("Created %s — set your Ollama URL in it, then run: python3 orchestrator.py check", path)
+    return 0
+
+
 def ask_target() -> str | None:
     if not sys.stdin.isatty():
         return None
@@ -111,11 +165,12 @@ def ask_target() -> str | None:
 
 def parse_args(argv):
     p = argparse.ArgumentParser(
-        description="Generate documentation with docpipe. Edit SETTINGS at the top of this file.")
-    p.add_argument("target", nargs="?", help="folder or git URL to document, or 'check'")
-    p.add_argument("--config", help="use a docpipe config file instead of SETTINGS")
-    p.add_argument("--ollama", help="Ollama URL (overrides SETTINGS)")
-    p.add_argument("--model", help="model name (overrides SETTINGS)")
+        description="Generate documentation with docpipe. Settings come from config.yaml "
+                    "(create it with `init`), else from SETTINGS at the top of this file.")
+    p.add_argument("target", nargs="?", help="folder or git URL to document, or 'init' / 'check'")
+    p.add_argument("--config", help="config file (default: ./config.yaml when it exists)")
+    p.add_argument("--ollama", help="Ollama URL (overrides the config)")
+    p.add_argument("--model", help="model name (overrides the config)")
     p.add_argument("--language", help="language to write in, e.g. nl")
     p.add_argument("--lang", action="append", help="also translate to this language (repeatable)")
     p.add_argument("--subdir", help="folder inside the repo, e.g. charts/owncast")
@@ -135,8 +190,11 @@ def main(argv=None) -> int:
     setup_logging("pretty", color=False if args.no_color else None)
     log = StageLogger()
 
-    # ---- settings -----------------------------------------------------------
-    config_file = args.config or (None if args.target else ("config.yaml" if Path("config.yaml").exists() else None))
+    if args.target == "init":
+        return init_config(Path(args.config or "config.yaml"), log)
+
+    # ---- settings: config.yaml if present, else SETTINGS ----------------------
+    config_file = args.config or ("config.yaml" if Path("config.yaml").exists() else None)
     try:
         cfg = load_config(config_file) if config_file else config_from_settings(SETTINGS)
     except (OSError, ValueError, TypeError) as exc:
@@ -157,7 +215,11 @@ def main(argv=None) -> int:
     # ---- 1. check Ollama ----------------------------------------------------
     if args.target == "check":
         problems = llm.check(benchmark=True, log=log)
-        return 3 if problems else 0
+        if problems:
+            log.error("Not ready:\n  " + "\n  ".join(problems))
+            return 3
+        log.success("Ollama is ready")
+        return 0
 
     # ---- what to document ---------------------------------------------------
     target = args.target
@@ -212,7 +274,7 @@ def main(argv=None) -> int:
     rc = 0 if all(r.status in ("ok", "skipped") for r in results) else 1
     if ok and (args.publish or cfg.publish.enabled):
         if not cfg.publish.repo:
-            log.error("No docs repo set: fill in SETTINGS['publish_repo'] or publish.repo in the config")
+            log.error("No docs repo set: set publish.repo in config.yaml")
             return 2
         from docpipe.publish import publish
         rc = max(rc, publish(cfg, log))

@@ -57,3 +57,16 @@ def test_runs_without_installing_docpipe(workdir, ollama):
                           cwd=workdir, capture_output=True, text=True, timeout=120)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "Done. Pages:" in proc.stdout
+
+
+def test_init_then_config_yaml_is_used_for_everything(workdir, ollama):
+    assert orchestrator.main(["init", "--no-color"]) == 0
+    cfg = workdir / "config.yaml"
+    assert "gemma4:31b" in cfg.read_text()
+    assert orchestrator.main(["init", "--no-color"]) == 2            # never overwrites
+    # point config.yaml at the server; no --ollama flag from here on
+    cfg.write_text(cfg.read_text().replace("http://localhost:11434", ollama.url))
+    assert orchestrator.main(["check", "--no-color"]) == 0
+    role = _write(workdir / "web", {"defaults/main.yml": "port: 80\n"})
+    assert orchestrator.main([str(role), "--no-color"]) == 0
+    assert (workdir / "output/docs/nl/web.md").exists()
