@@ -547,6 +547,8 @@ def test_split_into_overview_and_roles(platform):
     assert "haproxy: Install haproxy; Configure" in summary
     assert "db.yml: hosts=db; components=percona-galera-cluster" in summary
     assert "hosts.yml" in paths["ek"]
+    haproxy = next(u for u in units if u.title == "haproxy")
+    assert "Playbooks that apply it: lb.yaml (hosts: lb)." in haproxy.context
 
 
 def test_role_defaults_become_reference_table(platform):
@@ -574,3 +576,10 @@ def test_split_can_be_disabled(tmp_path, ollama, platform):
                 config={"pipeline": {"split_components": False}}) == 0
     out = tmp_path / "out" / "docs" / "en"
     assert (out / "ek-platform.md").exists() and not (out / "ek-platform").exists()
+
+
+def test_ansible_operations_style_allows_playbooks(tmp_path, ollama, platform):
+    assert _run(tmp_path, ollama, "--dir", str(platform),
+                config={"pipeline": {"ansible_style": "operations"}}) == 0
+    prompts = [json.dumps(c) for c in ollama.calls]
+    assert any("ansible-playbook -i hosts.yml" in p for p in prompts)

@@ -82,7 +82,13 @@ def targets(cfg: Config, opts: Options) -> list[str]:
 def banned_for(src: Source, kind: str, cfg: Config) -> list[str]:
     if src.banned_terms is not None:
         return src.banned_terms
+    if kind == "ansible" and cfg.pipeline.ansible_style == "operations":
+        return []                         # admin docs talk about playbooks on purpose
     return list(cfg.pipeline.banned_terms.get(kind, []))
+
+
+def prompt_kind(kind: str, pc) -> str:
+    return "ansible-ops" if kind == "ansible" and pc.ansible_style == "operations" else kind
 
 
 def process(src: Source, cfg: Config, llm: LLM, opts: Options, cache: Cache,
@@ -157,7 +163,7 @@ def _article(unit: Unit, src: Source, cfg: Config, llm: LLM, opts: Options, cach
     fingerprint = json.dumps([PROMPT_VERSION, cfg.llm.all_models(), primary, langs, opts.fast,
                               pc.input_token_budget, banned_for(src, repo.type, cfg), context,
                               pc.formality, pc.glossary, pc.keep_terms, pc.kube_cli,
-                              pc.max_reference_rows, src.subdir, unit.output], sort_keys=True)
+                              pc.max_reference_rows, src.subdir, unit.output, pc.ansible_style], sort_keys=True)
     digest = repo.digest(fingerprint)
     if not (opts.force or opts.dry_run) and cache.fresh(unit.key, digest, all_paths):
         log.cache("Unchanged since last successful run — skipped (use --force to rebuild)")
@@ -211,7 +217,7 @@ def _article(unit: Unit, src: Source, cfg: Config, llm: LLM, opts: Options, cach
     # ---- primary article -------------------------------------------------------
     log.llm("Generating article (%s)...", primary)
     with prof.stage("generate"):
-        body = generate(unit.title, repo.type, bundle, llm, pc, facts=facts_text,
+        body = generate(unit.title, prompt_kind(repo.type, pc), bundle, llm, pc, facts=facts_text,
                         context=context, lang=primary, log=log, prof=prof)
     with prof.stage(f"qa_{primary}"):
         body, rep = qa_loop(

@@ -72,6 +72,11 @@ up to three playbooks that apply it. Every page has its own cache entry, so a
 change in one role only regenerates that page. Turn it off with
 `pipeline.split_components: false`; `min_components` (default 2) sets the threshold.
 
+By default Ansible pages describe the installed software and never mention
+playbooks (end-user docs). For admin docs about the repo itself set
+`pipeline.ansible_style: operations`: pages then explain what each role does,
+which host groups it targets and how to run it with `ansible-playbook`.
+
 Check what each page will use with `--dry-run`.
 
 Monorepos: `subdir: charts/owncast`. House rules for every page go in

@@ -148,7 +148,12 @@ def split_ansible(repo: Repo, output: str, min_roles: int = 2) -> list[Unit]:
         context = (f"This page documents only the '{role}' component of the {platform} platform. "
                    f"Other components have their own pages; do not describe them.")
         if uses[role]:
-            context += " It is applied to the host groups targeted by: " + ", ".join(uses[role]) + "."
+            applied = []
+            for path in uses[role]:
+                hosts = sorted({_hosts(pl) for pl in books[path]
+                                if role in _roles_of_play(pl) or not _roles_of_play(pl)} - {""})
+                applied.append(f"{path} (hosts: {', '.join(hosts) or '?'})")
+            context += " Playbooks that apply it: " + "; ".join(applied) + "."
         units.append(Unit(key=f"{repo.name}/{role}", title=role, output=f"{stem}/{role}.md",
                           repo=sub, context=context))
     return units
