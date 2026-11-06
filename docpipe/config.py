@@ -74,6 +74,8 @@ class PipelineConfig:
     input_token_budget: int = 6000
     max_chars_per_file: int = 20000
     max_reference_rows: int = 400
+    split_components: bool = True          # Ansible repo with several roles -> overview + page per role
+    min_components: int = 2
 
     # QA
     qa_rounds: int = 3

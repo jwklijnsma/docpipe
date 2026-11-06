@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docpipe"
-version = "3.0.0"
+version = "3.1.0"
 description = "Multi-agent documentation generator backed by Ollama"
 requires-python = ">=3.10"
 dependencies = ["requests>=2.31", "pyyaml>=6.0"]

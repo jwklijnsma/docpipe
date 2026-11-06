@@ -40,6 +40,7 @@ pipeline:
   # --- quality / speed ---
   input_token_budget: 6000            # keeps articles in the 8k context bucket
   max_reference_rows: 400             # values / resources tables appended to each page
+  split_components: true              # Ansible repo with several roles -> overview + page per role
   qa_rounds: 3
   semantic_qa: true                   # LLM review of translations (off = faster)
   language_check: true                # flags sections left in the wrong language

@@ -53,13 +53,26 @@ Detected automatically; set `type:` only to override.
 | `helm` | `Chart.yaml` | `helm upgrade --install` steps, chart table, **full parameter table from values.yaml** (helm-docs `# --` and Bitnami `@param` descriptions), objects the templates create |
 | `k8s` | `kustomization.yaml` or manifests | `oc apply -k` steps, **resource table** (Deployments with images/ports, Services, Routes with host/TLS, PVCs, Secrets by key name only), **environment table** from `overlays/*` (DTAP) |
 | `argocd` | `argoproj.io` Application/ApplicationSet | which apps go where, sync policy, how to change things via MR; **application table** |
-| `ansible` | `tasks/`, `roles/`, `site.yml`… | the installed software, never the playbook |
+| `ansible` | `tasks/`, `roles/`, `site.yml`, `<role>/tasks/main.yml` in the root, root playbooks with `hosts:` | the installed software, never the playbook; **variables table** from `defaults/main.yml` |
 | `git` / `local` | anything else | install/configure/run from README, Dockerfile, configs |
 
 The reference tables are **rendered in code, not by the model**: no made-up
 defaults, no tokens spent re-typing tables, and they appear in every language.
 The extracted facts are also put in the prompt, so the article uses the real
 hosts, ports, images and required values.
+
+### Large Ansible repos: one page per role
+
+A platform repo with several roles (`haproxy/tasks/main.yml`, `roles/nginx/...`)
+does not fit in one prompt. docpipe splits it into an **overview page**
+(`<name>.md`: components with their task names, host groups from the playbooks,
+the inventory) and **one page per role** (`<name>/<role>.md`). A role page gets
+the role's own files, the shared root `templates/` it references via `src:`, and
+up to three playbooks that apply it. Every page has its own cache entry, so a
+change in one role only regenerates that page. Turn it off with
+`pipeline.split_components: false`; `min_components` (default 2) sets the threshold.
+
+Check what each page will use with `--dry-run`.
 
 Monorepos: `subdir: charts/owncast`. House rules for every page go in
 `pipeline.context` (e.g. "teams deploy via Argo CD, routes are

@@ -156,15 +156,32 @@ def detect_type(root: Path) -> str:
     if any("argoproj.io" in t and re.search(r"^kind:\s*(Application|ApplicationSet)\b", t, re.M)
            for t in texts):
         return "argocd"
+    if ansible_roles_in(root):
+        return "ansible"
     if any(p.name in ("kustomization.yaml", "kustomization.yml") for p in yamls) or sum(
             bool(re.search(r"^apiVersion:", t, re.M) and re.search(r"^kind:", t, re.M))
             for t in texts) >= 2:
         return "k8s"
     markers = ["playbook.yml", "site.yml", "ansible.cfg", "group_vars", "roles", "tasks/main.yml",
-               "defaults/main.yml"]
+               "tasks/main.yaml", "defaults/main.yml", "defaults/main.yaml"]
     if any((root / m).exists() for m in markers):
         return "ansible"
+    if any(_PLAYBOOK.search(t) for p, t in zip(yamls, texts) if p.parent == root):
+        return "ansible"
     return "local"
+
+
+_PLAYBOOK = re.compile(r"^-\s+(?:name:.*\n\s+)?hosts:\s*\S", re.M)
+
+
+def ansible_roles_in(root: Path) -> list[str]:
+    """Role directories directly in the root (`<role>/tasks/main.yml`) or under roles/."""
+    found = set()
+    for pattern in ("*/tasks/main.y*ml", "roles/*/tasks/main.y*ml"):
+        for p in root.glob(pattern):
+            if p.is_file() and p.parts[-3] not in NOISE_DIRS:
+                found.add(p.parts[-3])
+    return sorted(found)
 
 
 # ---- redaction --------------------------------------------------------------------

@@ -20,11 +20,12 @@ from docpipe.scan import Repo, SourceFile
 
 PRIORITY = {
     "ansible": [
-        "group_vars/all/main.yml", "group_vars/all.yml", "group_vars/*",
-        "defaults/main.yml", "roles/*/defaults/main.yml", "vars/main.yml",
-        "docker-compose*.y*ml", "**/docker-compose*.y*ml", "**/*compose*.j2",
-        "tasks/main.yml", "roles/*/tasks/main.yml", "README*", "*.md",
-        "templates/*.j2", "roles/*/templates/*.j2",
+        "README*", "hosts.y*ml", "inventory*", "site.y*ml",
+        "group_vars/all/main.y*ml", "group_vars/all.y*ml", "group_vars/*",
+        "defaults/main.y*ml", "vars/main.y*ml", "meta/main.y*ml",
+        "tasks/main.y*ml", "handlers/main.y*ml", "tasks/*.y*ml",
+        "docker-compose*.y*ml", "*compose*.j2", "*.md",
+        "templates/*.j2", "templates/*",
     ],
     "git": [
         "README*", "pyproject.toml", "setup.py", "setup.cfg", "package.json", "Cargo.toml",
@@ -60,9 +61,11 @@ def priority_files(repo: Repo, limit: int) -> list[SourceFile]:
     picked: list[SourceFile] = []
     seen: set[str] = set()
     for pattern in PRIORITY[repo.type]:
+        bare = pattern.removeprefix("**/")
         for f in repo.files:
-            if f.path not in seen and (fnmatch.fnmatch(f.path, pattern)
-                                       or fnmatch.fnmatch(f.path, pattern.removeprefix("**/"))):
+            # Match at the root and at any depth: roles/x/defaults/main.yml, haproxy/tasks/main.yml.
+            if f.path not in seen and (fnmatch.fnmatch(f.path, bare)
+                                       or fnmatch.fnmatch(f.path, "*/" + bare)):
                 picked.append(f)
                 seen.add(f.path)
                 if len(picked) >= limit:
