@@ -583,3 +583,34 @@ def test_ansible_operations_style_allows_playbooks(tmp_path, ollama, platform):
                 config={"pipeline": {"ansible_style": "operations"}}) == 0
     prompts = [json.dumps(c) for c in ollama.calls]
     assert any("ansible-playbook -i hosts.yml" in p for p in prompts)
+
+
+def test_nested_roles_in_subdir(tmp_path):
+    root = _write(tmp_path / "quattro-platform", {
+        "README.md": "# quattro\n",
+        "ansible/README.md": "# ansible\n",
+        "ansible/inventory/prod/hosts.yml": "all:\n  children:\n    lb:\n",
+        "ansible/inventory/prod/group_vars/all.yml": "domain: example.nl\n",
+        "ansible/playbooks/lb.yml": "- hosts: lb\n  roles:\n    - haproxy2\n",
+        "ansible/playbooks/argocd.yml": "- hosts: k8s\n  roles:\n    - k8s/argocd-ops\n",
+        "ansible/roles/haproxy2/tasks/main.yml": "- name: Install\n  apt: name=haproxy\n",
+        "ansible/roles/haproxy2/README.md": "# haproxy2\n",
+        "ansible/roles/k8s/argocd-ops/tasks/main.yml": "- name: Deploy ops\n  command: oc apply\n",
+        "ansible/roles/k8s/argocd-ops/defaults/main.yml": "argocd_ns: openshift-gitops\n",
+        "ansible/roles/k8s/argocd-target-cluster/tasks/main.yml": "- name: Register\n  command: x\n",
+    })
+    assert detect_type(root) == "ansible"
+    repo = scan(Source(name="quattro-platform", path=str(root)), root)
+    units = split_ansible(repo, "quattro-platform.md")
+    assert [u.output for u in units] == [
+        "quattro-platform.md", "quattro-platform/haproxy2.md",
+        "quattro-platform/k8s/argocd-ops.md", "quattro-platform/k8s/argocd-target-cluster.md"]
+    by = {u.output: u for u in units}
+    ops = by["quattro-platform/k8s/argocd-ops.md"]
+    assert ops.title == "argocd-ops"
+    assert "ansible/roles/k8s/argocd-ops/defaults/main.yml" in [f.path for f in ops.repo.files]
+    assert "argocd.yml (hosts: k8s)" in ops.context
+    assert "lb.yml (hosts: lb)" in by["quattro-platform/haproxy2.md"].context
+    overview = [f.path for f in units[0].repo.files]
+    assert "ansible/inventory/prod/hosts.yml" in overview and "ansible/README.md" in overview
+    assert "ansible/inventory/prod/group_vars/all.yml" in overview

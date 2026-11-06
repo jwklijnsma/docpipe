@@ -174,13 +174,15 @@ def detect_type(root: Path) -> str:
 _PLAYBOOK = re.compile(r"^-\s+(?:name:.*\n\s+)?hosts:\s*\S", re.M)
 
 
-def ansible_roles_in(root: Path) -> list[str]:
-    """Role directories directly in the root (`<role>/tasks/main.yml`) or under roles/."""
+def ansible_roles_in(root: Path, max_depth: int = 6) -> list[str]:
+    """Role directories at any depth: every `<dir>/tasks/main.y*ml` below the root."""
     found = set()
-    for pattern in ("*/tasks/main.y*ml", "roles/*/tasks/main.y*ml"):
-        for p in root.glob(pattern):
-            if p.is_file() and p.parts[-3] not in NOISE_DIRS:
-                found.add(p.parts[-3])
+    for p in root.rglob("main.y*ml"):
+        rel = p.relative_to(root).parts
+        if (len(rel) < 3 or len(rel) > max_depth + 2 or rel[-2] != "tasks" or not p.is_file()
+                or any(part in NOISE_DIRS for part in rel)):
+            continue
+        found.add("/".join(rel[:-2]))
     return sorted(found)
 
 

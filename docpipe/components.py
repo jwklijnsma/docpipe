@@ -12,7 +12,8 @@ one overview page describes the platform as a whole.
   * overview    — a generated summary (roles with their task names, playbooks with
                   their hosts and roles), the inventory, group_vars and root docs.
 
-Layouts supported: `<role>/tasks/main.yml` in the root and `roles/<role>/tasks/...`.
+A role is any directory with tasks/main.yml, at any depth (`haproxy/`, `roles/nginx/`,
+`ansible/roles/k8s/argocd-ops/`). Nested roles keep their group in the page path.
 """
 
 from __future__ import annotations
@@ -25,12 +26,13 @@ import yaml
 
 from docpipe.scan import Repo, SourceFile
 
-_ROLE_FILE = re.compile(r"^(?P<prefix>(?:roles/)?(?P<role>[^/]+))/tasks/[^/]+\.ya?ml$")
+_ROLE_MAIN = re.compile(r"^(?P<prefix>.+)/tasks/main\.ya?ml$")
 _TASK_NAME = re.compile(r"^\s*-\s+name:\s*['\"]?(.+?)['\"]?\s*$", re.M)
 _SRC_REF = re.compile(r"""\bsrc[ \t]*[:=][ \t]*["']?([^\s"'{}=,]+)""")
 _PLAY = re.compile(r"^-\s+(?:name:.*\n\s+)?hosts:\s*\S", re.M)
 _INVENTORY = ("hosts.yml", "hosts.yaml", "hosts", "inventory.yml", "inventory.yaml", "inventory.ini")
 SUMMARY = "README.platform.md"
+_NOT_PLAYBOOK_DIRS = {"group_vars", "host_vars", "inventory", "inventories", "templates", "files", "vars", "defaults"}
 MAX_PLAYBOOKS_PER_ROLE = 3
 MAX_TASK_NAMES = 8
 
@@ -44,13 +46,29 @@ class Unit:
     context: str = ""     # extra writer guidance for this unit only
 
 
+def role_name(prefix: str) -> str:
+    """Path of the role below the nearest roles/ dir: 'ansible/roles/k8s/argocd-ops' -> 'k8s/argocd-ops'."""
+    parts = prefix.split("/")
+    if "roles" in parts[:-1]:
+        i = len(parts) - 1 - parts[::-1].index("roles")
+        return "/".join(parts[i + 1:])
+    return parts[-1]
+
+
 def role_prefixes(repo: Repo) -> dict[str, str]:
-    """role name -> path prefix, e.g. {'haproxy': 'haproxy', 'nginx': 'roles/nginx'}."""
+    """role name -> role dir, e.g. {'haproxy': 'haproxy', 'k8s/argocd-ops': 'ansible/roles/k8s/argocd-ops'}.
+
+    A role is any directory with tasks/main.y(a)ml, at any depth.
+    """
     found: dict[str, str] = {}
     for f in repo.files:
-        m = _ROLE_FILE.match(f.path)
-        if m and m.group("role") not in ("roles", "tasks"):
-            found.setdefault(m.group("role"), m.group("prefix"))
+        m = _ROLE_MAIN.match(f.path)
+        if not m:
+            continue
+        name = role_name(m.group("prefix"))
+        if name in found and found[name] != m.group("prefix"):
+            name = m.group("prefix")                  # same name twice: fall back to the full path
+        found.setdefault(name, m.group("prefix"))
     return dict(sorted(found.items()))
 
 
@@ -91,7 +109,7 @@ def playbooks(repo: Repo, role_files: set[str]) -> dict[str, list[dict]]:
     for f in repo.files:
         if f.path in role_files or PurePosixPath(f.path).suffix not in (".yml", ".yaml"):
             continue
-        if len(PurePosixPath(f.path).parts) > 2:
+        if set(PurePosixPath(f.path).parts[:-1]) & _NOT_PLAYBOOK_DIRS:
             continue
         if _PLAY.search(f.content):
             out[f.path] = _plays(f.content) or [{"hosts": "?"}]
@@ -108,8 +126,9 @@ def split_ansible(repo: Repo, output: str, min_roles: int = 2) -> list[Unit]:
 
     by_role: dict[str, list[SourceFile]] = {r: [] for r in roles}
     owned: set[str] = set()
+    longest_first = sorted(roles.items(), key=lambda kv: -len(kv[1]))
     for f in repo.files:
-        for role, prefix in roles.items():
+        for role, prefix in longest_first:
             if f.path.startswith(prefix + "/"):
                 by_role[role].append(f)
                 owned.add(f.path)
@@ -125,7 +144,7 @@ def split_ansible(repo: Repo, output: str, min_roles: int = 2) -> list[Unit]:
         named = {n for p in plays for n in _roles_of_play(p)}
         content = repo.get(path) or ""
         for role in roles:
-            if role in named or (not named and re.search(rf"(?<![\w-]){re.escape(role)}(?![\w-])", content)):
+            if PurePosixPath(role).name in named or (not named and re.search(rf"(?<![\w-]){re.escape(PurePosixPath(role).name)}(?![\w-])", content)):
                 uses[role].append(path)
 
     stem = output[:-3] if output.endswith(".md") else output
@@ -145,16 +164,18 @@ def split_ansible(repo: Repo, output: str, min_roles: int = 2) -> list[Unit]:
                 files.append(SourceFile(path, repo.get(path) or ""))
                 seen.add(path)
         sub = Repo(name=role, type=repo.type, files=files, revision=repo.revision)
-        context = (f"This page documents only the '{role}' component of the {platform} platform. "
+        context = (f"This page documents only the '{PurePosixPath(role).name}' component of the {platform} platform. "
                    f"Other components have their own pages; do not describe them.")
         if uses[role]:
             applied = []
             for path in uses[role]:
                 hosts = sorted({_hosts(pl) for pl in books[path]
-                                if role in _roles_of_play(pl) or not _roles_of_play(pl)} - {""})
+                                if PurePosixPath(role).name in _roles_of_play(pl)
+                                or not _roles_of_play(pl)} - {""})
                 applied.append(f"{path} (hosts: {', '.join(hosts) or '?'})")
             context += " Playbooks that apply it: " + "; ".join(applied) + "."
-        units.append(Unit(key=f"{repo.name}/{role}", title=role, output=f"{stem}/{role}.md",
+        units.append(Unit(key=f"{repo.name}/{role}", title=PurePosixPath(role).name,
+                          output=f"{stem}/{role}.md",
                           repo=sub, context=context))
     return units
 
@@ -179,10 +200,10 @@ def _overview(repo: Repo, platform: str, output: str, roles: dict[str, str],
 
     files = [summary]
     for f in shared:
-        name = PurePosixPath(f.path).name
-        top = PurePosixPath(f.path).parts[0]
-        if (name in _INVENTORY or top in ("group_vars", "host_vars", "inventory", "inventories")
-                or (f.path.lower().endswith(".md") and len(PurePosixPath(f.path).parts) == 1)):
+        parts = PurePosixPath(f.path).parts
+        if (parts[-1] in _INVENTORY
+                or set(parts[:-1]) & {"group_vars", "host_vars", "inventory", "inventories"}
+                or (f.path.lower().endswith(".md") and len(parts) <= 2)):
             files.append(f)
     sub = Repo(name=repo.name, type=repo.type, files=files, revision=repo.revision)
     context = (f"This is the overview page of the {platform} platform: explain what the platform "
