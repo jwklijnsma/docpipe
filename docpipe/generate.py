@@ -40,6 +40,12 @@ TYPE_GUIDE = {
     "git": "The source is an application repository. Document how to install, configure and run it.",
 }
 TYPE_GUIDE["local"] = TYPE_GUIDE["git"]
+TYPE_GUIDE["ansible-ops"] = (
+    "The source is an Ansible repository; the readers are the administrators who run it. Explain "
+    "what the role or playbook does, step by step from its tasks, which host groups it targets "
+    "(from the playbooks and inventory), which variables can be set and their defaults, and how "
+    "to run it: `ansible-playbook -i hosts.yml <playbook>` with `--limit` and `--check --diff` "
+    "where useful. Use only playbook, host group, role and variable names present in the source.")
 
 
 def title_of(name: str) -> str:

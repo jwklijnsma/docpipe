@@ -12,7 +12,8 @@ from docpipe.facts import extract, values_comments
 from docpipe.llm import LLM
 from docpipe.qa import check_article, check_translation, language_issues
 from docpipe.scan import SourceFile, detect_type, redact, scan
-from docpipe.selector import pack
+from docpipe.components import split_ansible
+from docpipe.selector import pack, priority_files
 from docpipe.site import split_front_matter
 from docpipe.translate import mask, unmask
 from tests.fakes import ARTICLE, DUTCH, FakeGitLab, FakeOllama
@@ -487,3 +488,129 @@ def test_publish_dry_run_does_not_push(tmp_path, ollama, role, docs_remote):
     assert main(base + ["publish", "--dry-run"]) == 0
     heads = subprocess.run(["git", "--git-dir", str(docs_remote), "branch"], capture_output=True, text=True).stdout
     assert "docpipe/update" not in heads
+
+
+# ---- Ansible platform repos: overview + one page per role --------------------------
+
+@pytest.fixture
+def platform(tmp_path):
+    """Layout of a real platform repo: roles in the root, playbooks in the root, shared templates/."""
+    return _write(tmp_path / "ek-platform", {
+        "hosts.yml": "all:\n  children:\n    lb:\n      hosts:\n        lb01:\n    db:\n      hosts:\n        db01:\n",
+        "lb.yaml": "- hosts: lb\n  roles:\n    - haproxy\n    - node-exporter\n",
+        "db.yml": "- name: databases\n  hosts: db\n  roles:\n    - role: percona-galera-cluster\n",
+        "prometheus.yml": "- hosts: monitoring\n  tasks:\n    - include_role:\n        name: prometheus\n",
+        "haproxy/tasks/main.yml": ("- name: Install haproxy\n  apt: name=haproxy\n"
+                                   "- name: Configure\n  template:\n    src: haproxy-ext-prod.cfg.j2\n"
+                                   "    dest: /etc/haproxy/haproxy.cfg\n"),
+        "haproxy/templates/haproxy-ext-prod.cfg.j2": "frontend fe\n  bind *:443\n",
+        "node-exporter/tasks/main.yml": ("- name: Unit\n  template:\n    src: templates/node_exporter.service.j2\n"
+                                         "    dest: /etc/systemd/system/node_exporter.service\n"),
+        "prometheus/tasks/main.yaml": "- name: Config\n  template: src=prometheus.yml.j2 dest=/etc/prometheus.yml\n",
+        "percona-galera-cluster/defaults/main.yml": "galera_port: 3306\nroot_password: s3cret\n",
+        "percona-galera-cluster/tasks/main.yml": "- name: Compose\n  template:\n    src: docker-compose.yml.j2\n    dest: /opt/x\n",
+        "percona-galera-cluster/templates/docker-compose.yml.j2": "services:\n  db:\n    image: percona\n",
+        "percona-galera-cluster/readme.md": "# galera\n",
+        "templates/node_exporter.service.j2": "[Service]\nExecStart=/usr/local/bin/node_exporter\n",
+        "templates/prometheus.yml.j2": "scrape_configs: []\n",
+        "templates/grafana-agent.yaml.j2": "unused: true\n",
+    })
+
+
+def test_detects_roles_in_repo_root(platform):
+    assert detect_type(platform) == "ansible"
+
+
+def test_priority_patterns_match_at_any_depth(platform):
+    repo = scan(Source(name="ek", path=str(platform)), platform)
+    picked = [f.path for f in priority_files(repo, 50)]
+    assert "percona-galera-cluster/defaults/main.yml" in picked
+    assert "prometheus/tasks/main.yaml" in picked
+    assert picked.index("percona-galera-cluster/defaults/main.yml") < picked.index(
+        "templates/grafana-agent.yaml.j2")
+
+
+def test_split_into_overview_and_roles(platform):
+    repo = scan(Source(name="ek", path=str(platform)), platform)
+    units = split_ansible(repo, "ek.md")
+    assert [u.output for u in units] == ["ek.md", "ek/haproxy.md", "ek/node-exporter.md",
+                                         "ek/percona-galera-cluster.md", "ek/prometheus.md"]
+    paths = {u.title: [f.path for f in u.repo.files] for u in units}
+    # shared templates follow the role that references them; unused ones go nowhere
+    assert "templates/node_exporter.service.j2" in paths["node-exporter"]
+    assert "templates/prometheus.yml.j2" in paths["prometheus"]
+    assert not any("grafana-agent" in p for ps in paths.values() for p in ps)
+    # playbooks that apply the role (plain, role: and include_role forms)
+    assert "lb.yaml" in paths["haproxy"] and "lb.yaml" in paths["node-exporter"]
+    assert "db.yml" in paths["percona-galera-cluster"] and "prometheus.yml" in paths["prometheus"]
+    summary = units[0].repo.get("README.platform.md")
+    assert "haproxy: Install haproxy; Configure" in summary
+    assert "db.yml: hosts=db; components=percona-galera-cluster" in summary
+    assert "hosts.yml" in paths["ek"]
+    haproxy = next(u for u in units if u.title == "haproxy")
+    assert "Playbooks that apply it: lb.yaml (hosts: lb)." in haproxy.context
+
+
+def test_role_defaults_become_reference_table(platform):
+    repo = scan(Source(name="ek", path=str(platform)), platform)
+    galera = next(u for u in split_ansible(repo, "ek.md") if u.title == "percona-galera-cluster")
+    facts = extract(galera.repo)
+    assert "Default variable: galera_port = 3306" in facts.prompt_lines
+    assert "root_password = <redacted>" in facts.prompt_text()
+    assert "| `galera_port` | `3306` |" in facts.appendix("nl")
+
+
+def test_platform_run_writes_page_per_role(tmp_path, ollama, platform):
+    assert _run(tmp_path, ollama, "--dir", str(platform)) == 0
+    out = tmp_path / "out" / "docs" / "en"
+    assert (out / "ek-platform.md").exists()
+    assert sorted(p.name for p in (out / "ek-platform").glob("*.md")) == [
+        "haproxy.md", "node-exporter.md", "percona-galera-cluster.md", "prometheus.md"]
+    calls = len(ollama.calls)
+    assert _run(tmp_path, ollama, "--dir", str(platform)) == 0     # all pages cached
+    assert len(ollama.calls) == calls
+
+
+def test_split_can_be_disabled(tmp_path, ollama, platform):
+    assert _run(tmp_path, ollama, "--dir", str(platform),
+                config={"pipeline": {"split_components": False}}) == 0
+    out = tmp_path / "out" / "docs" / "en"
+    assert (out / "ek-platform.md").exists() and not (out / "ek-platform").exists()
+
+
+def test_ansible_operations_style_allows_playbooks(tmp_path, ollama, platform):
+    assert _run(tmp_path, ollama, "--dir", str(platform),
+                config={"pipeline": {"ansible_style": "operations"}}) == 0
+    prompts = [json.dumps(c) for c in ollama.calls]
+    assert any("ansible-playbook -i hosts.yml" in p for p in prompts)
+
+
+def test_nested_roles_in_subdir(tmp_path):
+    root = _write(tmp_path / "quattro-platform", {
+        "README.md": "# quattro\n",
+        "ansible/README.md": "# ansible\n",
+        "ansible/inventory/prod/hosts.yml": "all:\n  children:\n    lb:\n",
+        "ansible/inventory/prod/group_vars/all.yml": "domain: example.nl\n",
+        "ansible/playbooks/lb.yml": "- hosts: lb\n  roles:\n    - haproxy2\n",
+        "ansible/playbooks/argocd.yml": "- hosts: k8s\n  roles:\n    - k8s/argocd-ops\n",
+        "ansible/roles/haproxy2/tasks/main.yml": "- name: Install\n  apt: name=haproxy\n",
+        "ansible/roles/haproxy2/README.md": "# haproxy2\n",
+        "ansible/roles/k8s/argocd-ops/tasks/main.yml": "- name: Deploy ops\n  command: oc apply\n",
+        "ansible/roles/k8s/argocd-ops/defaults/main.yml": "argocd_ns: openshift-gitops\n",
+        "ansible/roles/k8s/argocd-target-cluster/tasks/main.yml": "- name: Register\n  command: x\n",
+    })
+    assert detect_type(root) == "ansible"
+    repo = scan(Source(name="quattro-platform", path=str(root)), root)
+    units = split_ansible(repo, "quattro-platform.md")
+    assert [u.output for u in units] == [
+        "quattro-platform.md", "quattro-platform/haproxy2.md",
+        "quattro-platform/k8s/argocd-ops.md", "quattro-platform/k8s/argocd-target-cluster.md"]
+    by = {u.output: u for u in units}
+    ops = by["quattro-platform/k8s/argocd-ops.md"]
+    assert ops.title == "argocd-ops"
+    assert "ansible/roles/k8s/argocd-ops/defaults/main.yml" in [f.path for f in ops.repo.files]
+    assert "argocd.yml (hosts: k8s)" in ops.context
+    assert "lb.yml (hosts: lb)" in by["quattro-platform/haproxy2.md"].context
+    overview = [f.path for f in units[0].repo.files]
+    assert "ansible/inventory/prod/hosts.yml" in overview and "ansible/README.md" in overview
+    assert "ansible/inventory/prod/group_vars/all.yml" in overview

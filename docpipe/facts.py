@@ -1,6 +1,6 @@
 """
 Deterministic fact extraction for Helm charts, Kubernetes/OpenShift manifests,
-Kustomize overlays and Argo CD applications.
+Kustomize overlays, Argo CD applications and Ansible role defaults.
 
 Facts are used twice:
   * as a compact, authoritative block in the writer prompt (real ports, hosts,
@@ -96,7 +96,38 @@ def extract(repo: Repo, max_rows: int = 400) -> Facts:
     _argocd(docs, facts)
     _resources(docs, facts, max_rows)
     _kustomize(repo, docs, facts)
+    if repo.type == "ansible":
+        _ansible_defaults(repo, facts, max_rows)
     return facts
+
+
+# ---- Ansible -----------------------------------------------------------------------
+
+def _ansible_defaults(repo: Repo, facts: Facts, max_rows: int) -> None:
+    """Role defaults/vars as a reference table: the variables a user can override."""
+    files = [f for f in repo.files
+             if fnmatch.fnmatch(f.path, "defaults/main.y*ml") or fnmatch.fnmatch(f.path, "*/defaults/main.y*ml")]
+    rows = []
+    for f in files:
+        try:
+            data = yaml.safe_load(f.content) or {}
+        except yaml.YAMLError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        prefix = ""
+        if len(files) > 1:
+            parts = PurePosixPath(f.path).parts
+            prefix = f"{parts[-3]}: " if len(parts) >= 3 else ""
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                shown = json.dumps(value, ensure_ascii=False, default=str)
+            else:
+                shown = "" if value is None else str(value)
+            rows.append([_code(f"{prefix}{key}"), _code(shown)])
+            facts.prompt_lines.append(f"Default variable: {prefix}{key} = {shown[:120]}")
+    if rows:
+        facts.tables.append(Table("variables", ["key", "default"], rows[:max_rows], total=len(rows)))
 
 
 # ---- Helm --------------------------------------------------------------------------

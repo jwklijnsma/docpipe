@@ -74,6 +74,9 @@ class PipelineConfig:
     input_token_budget: int = 6000
     max_chars_per_file: int = 20000
     max_reference_rows: int = 400
+    ansible_style: str = "software"         # software (end-user docs) | operations (admin docs, playbooks)
+    split_components: bool = True          # Ansible repo with several roles -> overview + page per role
+    min_components: int = 2
 
     # QA
     qa_rounds: int = 3
@@ -91,6 +94,8 @@ class PipelineConfig:
             raise ValueError("pipeline.formality must be 'informal' or 'formal'")
         if self.kube_cli not in ("oc", "kubectl"):
             raise ValueError("pipeline.kube_cli must be 'oc' or 'kubectl'")
+        if self.ansible_style not in ("software", "operations"):
+            raise ValueError("pipeline.ansible_style must be 'software' or 'operations'")
 
     def targets(self) -> list[str]:
         return [l for l in self.languages if l != self.primary_language]
