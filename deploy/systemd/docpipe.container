@@ -1,4 +1,6 @@
 # docpipe web UI as a rootless Podman Quadlet (RHEL 9/10, Fedora; Podman >= 4.4).
+# ROOTLESS ONLY: put it in ~/.config/containers/systemd/, never in /etc/containers/systemd/.
+# As root it fails with exit 125 ("ID-mapped copy of layer"); use docpipe-rootful.container there.
 # Easiest: `./install.sh` in this folder does all the steps below (see install.sh --help).
 #
 #   openssl rand -hex 24 | tr -d '\n' | podman secret create docpipe-token -
