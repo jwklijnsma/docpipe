@@ -2,7 +2,7 @@
 # (On RHEL/Fedora with Podman, use install.sh or docpipe.container instead.)
 #
 #   sudo mkdir -p /etc/docpipe
-#   sudo install -m 600 docpipe.env.example /etc/docpipe/docpipe.env   # set DOCPIPE_WEB_TOKEN
+#   sudo install -m 600 docpipe.env.example /etc/docpipe/docpipe.env   # uncomment and set DOCPIPE_WEB_TOKEN
 #   sudo cp docpipe-docker.service /etc/systemd/system/docpipe.service
 #   sudo systemctl edit docpipe      # optional: change REPOS or PORT (see below)
 #   sudo systemctl daemon-reload

@@ -4,7 +4,7 @@
 #
 #   openssl rand -hex 24 | tr -d '\n' | sudo podman secret create docpipe-token -
 #   sudo mkdir -p /etc/docpipe
-#   sudo install -m 600 docpipe.env.example /etc/docpipe/docpipe.env     # Ollama URL, model
+#   sudo install -m 600 docpipe.env.example /etc/docpipe/docpipe.env     # required: Ollama URL, model
 #   sudo cp docpipe-rootful.container /etc/containers/systemd/docpipe.container
 #   # edit the Volume= path below, then:
 #   sudo systemctl daemon-reload
@@ -38,7 +38,9 @@ Volume=docpipe-data:/data:U
 UserNS=host
 
 Secret=docpipe-token,type=env,target=DOCPIPE_WEB_TOKEN
-EnvironmentFile=-/etc/docpipe/docpipe.env
+# Settings (model, Ollama URL, ...). The file must exist: Quadlet hands this path to
+# `podman --env-file`, which has no "optional" form. An unchanged copy of the example is fine.
+EnvironmentFile=/etc/docpipe/docpipe.env
 
 NoNewPrivileges=true
 DropCapability=all

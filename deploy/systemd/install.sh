@@ -128,6 +128,8 @@ if [ ! -f "$ENV_FILE" ]; then
   sed -E 's/^([A-Z_]*WEB_TOKEN=)/#\1/' "$TMP/$APP.env.example" > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
 fi
+# An empty or example token here would override the Podman secret.
+sed -i -E 's/^([A-Z_]*WEB_TOKEN=(change-me)?)$/#\1/' "$ENV_FILE"
 set_env() {   # set_env KEY VALUE: replace (or uncomment) the line, or append it
   local k=$1 v=$2
   if grep -qE "^#?${k}=" "$ENV_FILE"; then
