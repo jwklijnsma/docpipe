@@ -1,0 +1,48 @@
+# docpipe web UI as a systemd service on a Docker host.
+# (On RHEL/Fedora with Podman, use install.sh or docpipe.container instead.)
+#
+#   sudo mkdir -p /etc/docpipe
+#   sudo install -m 600 docpipe.env.example /etc/docpipe/docpipe.env   # set DOCPIPE_WEB_TOKEN
+#   sudo cp docpipe-docker.service /etc/systemd/system/docpipe.service
+#   sudo systemctl edit docpipe      # optional: change REPOS or PORT (see below)
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now docpipe
+#
+# Then open http://localhost:8770/?token=<DOCPIPE_WEB_TOKEN>.
+# Logs: journalctl -u docpipe -f       Update: sudo systemctl restart docpipe
+
+[Unit]
+Description=docpipe: documentation from charts, manifests and Ansible, written by a local Ollama model
+Documentation=https://github.com/jwklijnsma/docpipe
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+# Change these with `systemctl edit docpipe`:
+#   REPOS  folder with the repositories to document (mounted read-only)
+#   PORT   port on 127.0.0.1
+Environment=IMAGE=ghcr.io/jwklijnsma/docpipe:latest
+Environment=REPOS=/srv/git
+Environment=PORT=8770
+
+# Pull the newest image on every (re)start; keep going on the cached one when offline.
+ExecStartPre=-/usr/bin/docker pull ${IMAGE}
+ExecStartPre=-/usr/bin/docker rm -f docpipe
+# host.containers.internal: the name the image uses for Ollama on this host.
+ExecStart=/usr/bin/docker run --rm --name docpipe \
+  -p 127.0.0.1:${PORT}:8770 \
+  --add-host=host.containers.internal:host-gateway \
+  --security-opt no-new-privileges --cap-drop ALL \
+  -v ${REPOS}:/repos:ro \
+  -v docpipe-data:/data \
+  --env-file /etc/docpipe/docpipe.env \
+  ${IMAGE}
+# SIGINT (the image's stop signal) lets running jobs stop cleanly.
+ExecStop=/usr/bin/docker stop -t 30 docpipe
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

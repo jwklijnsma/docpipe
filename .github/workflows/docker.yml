@@ -48,6 +48,8 @@ jobs:
           cache: pip
       - run: pip install -e ".[test]"
       - run: pytest -q
+      - name: shellcheck the service installer
+        run: shellcheck deploy/systemd/install.sh
 
   image:
     needs: test

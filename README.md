@@ -34,18 +34,19 @@ Security as in ansreview: it listens on `127.0.0.1` by default, every API call n
 
 ### Container and systemd
 
-Every push to `main` publishes `ghcr.io/jwklijnsma/docpipe` (UBI 9, amd64 + arm64); it starts the web UI by default. As a service with Podman Quadlet:
+Every push to `main` publishes `ghcr.io/jwklijnsma/docpipe` (UBI 9, amd64 + arm64); it starts the web UI by default. To run it as a service with Podman Quadlet, one command does everything:
 
 ```bash
-openssl rand -hex 24 | tr -d '\n' | podman secret create docpipe-token -
-mkdir -p ~/.config/containers/systemd ~/.config/docpipe
-cp deploy/systemd/docpipe.container ~/.config/containers/systemd/
-install -m 600 deploy/systemd/docpipe.env.example ~/.config/docpipe/docpipe.env   # Ollama URL
-systemctl --user daemon-reload && systemctl --user start docpipe
-loginctl enable-linger "$USER"
+sudo deploy/systemd/install.sh                      # system service, starts at boot, repos in /srv/git
+deploy/systemd/install.sh                           # or rootless, as yourself, repos in ~/git
+sudo deploy/systemd/install.sh --repos /data/git --lan --model qwen2.5:14b --ollama http://gpu-box:11434
 ```
 
-As root, use `deploy/systemd/docpipe-rootful.container` (steps in its header). Show the token with `podman secret inspect --showsecret --format '{{.SecretData}}' docpipe-token`. The one-off use still works: `podman run --rm -v $PWD:/work:Z ghcr.io/jwklijnsma/docpipe run --dir /work/my-role`.
+Without a checkout: `curl -fsSL https://raw.githubusercontent.com/jwklijnsma/docpipe/main/deploy/systemd/install.sh | sudo bash -s -- --lan`.
+
+It creates the access token as a Podman secret, writes the settings file (`/etc/docpipe/docpipe.env`, or `~/.config/docpipe/` rootless) and the unit, starts the service, waits until it answers and prints the link with the token. Run it again to change the folder, port, model or Ollama URL; `--new-token` rotates the token, `--uninstall` removes the service. Images update daily through `podman-auto-update.timer`.
+
+By hand: `deploy/systemd/docpipe.container` (rootless) and `docpipe-rootful.container` (root, `UserNS=host`) have the steps in their header. On a Docker host use `docpipe-docker.service`. Show the token with `podman secret inspect --showsecret --format '{{.SecretData}}' docpipe-token`. The one-off use still works: `podman run --rm -v $PWD:/work:Z ghcr.io/jwklijnsma/docpipe run --dir /work/my-role`.
 
 ### Releasing
 
