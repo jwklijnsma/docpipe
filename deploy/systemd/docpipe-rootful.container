@@ -1,0 +1,53 @@
+# docpipe web UI as a rootful Podman Quadlet (system service, starts at boot).
+# For your own user (rootless) use docpipe.container.
+#
+#   openssl rand -hex 24 | tr -d '\n' | sudo podman secret create docpipe-token -
+#   sudo mkdir -p /etc/docpipe
+#   sudo install -m 600 docpipe.env.example /etc/docpipe/docpipe.env     # Ollama URL, model
+#   sudo cp docpipe-rootful.container /etc/containers/systemd/docpipe.container
+#   # edit the Volume= path below, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl start docpipe
+#   sudo systemctl enable --now podman-auto-update.timer
+#
+# Token: sudo podman secret inspect --showsecret --format '{{.SecretData}}' docpipe-token
+# Logs:  journalctl -u docpipe -f
+
+[Unit]
+Description=docpipe: documentation from charts, manifests and Ansible, written by a local Ollama model
+Documentation=https://github.com/jwklijnsma/docpipe
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=docpipe
+Image=ghcr.io/jwklijnsma/docpipe:latest
+AutoUpdate=registry
+# Only on this machine. For your LAN: PublishPort=8770:8770 (plain HTTP).
+PublishPort=127.0.0.1:8770:8770
+
+# The repositories to document (must exist; read-only, docpipe never writes there).
+Volume=/srv/git:/repos:ro,z
+Volume=docpipe-data:/data:U
+# Optional base config (house rules, glossary, languages):
+#Volume=/etc/docpipe/config.yaml:/config/config.yaml:ro,z
+
+# No user namespace: avoids "creating an ID-mapped copy of layer" (exit 125) on some
+# hosts, e.g. in LXC. The image's own non-root user runs it.
+UserNS=host
+
+Secret=docpipe-token,type=env,target=DOCPIPE_WEB_TOKEN
+EnvironmentFile=-/etc/docpipe/docpipe.env
+
+NoNewPrivileges=true
+DropCapability=all
+StopSignal=SIGINT
+StopTimeout=30
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

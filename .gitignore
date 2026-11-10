@@ -12,3 +12,6 @@ dist/
 /docs/
 /site/
 config.yaml
+
+# web UI (React); the built bundle in docpipe/web/static/ IS committed
+web/node_modules/

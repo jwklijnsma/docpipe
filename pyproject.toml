@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docpipe"
-version = "3.1.0"
+dynamic = ["version"]
 description = "Multi-agent documentation generator backed by Ollama"
 requires-python = ">=3.10"
 dependencies = ["requests>=2.31", "pyyaml>=6.0"]
@@ -15,8 +15,15 @@ test = ["pytest>=7"]
 [project.scripts]
 docpipe = "docpipe.cli:main"
 
+[tool.setuptools.dynamic]
+# Single source of truth: the release workflow bumps __version__ only.
+version = { attr = "docpipe.__version__" }
+
 [tool.setuptools.packages.find]
 include = ["docpipe*"]
+
+[tool.setuptools.package-data]
+"docpipe.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

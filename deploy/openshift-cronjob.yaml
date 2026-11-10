@@ -63,7 +63,8 @@ spec:
           containers:
             - name: docpipe
               image: image-registry.openshift-image-registry.svc:5000/docs/docpipe:3
-              args: ["-c", "/config/config.yaml", "watch", "--publish"]
+              # JSON logs for the cluster log stack (the image no longer adds this itself)
+              args: ["--log-format", "json", "-c", "/config/config.yaml", "watch", "--publish"]
               envFrom:
                 - secretRef:
                     name: docpipe-tokens

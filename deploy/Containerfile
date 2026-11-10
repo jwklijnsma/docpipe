@@ -1,19 +1,54 @@
-# Build:  podman build -f deploy/Containerfile -t docpipe:3 .
-# Run:    podman run --rm -v $PWD:/work:Z -e DOCPIPE_OLLAMA_URL=http://ollama.example.internal:11434 \
-#           docpipe:3 run --dir /work/my-role
+# docpipe on UBI 9 (OpenShift-friendly: runs as a random UID in group 0).
+#
+# Web UI (default):
+#   podman run -d -p 127.0.0.1:8770:8770 -v ~/git:/repos:z -v docpipe-data:/data:U \
+#     -e DOCPIPE_OLLAMA_URL=http://host.containers.internal:11434 \
+#     -e DOCPIPE_WEB_TOKEN="$(openssl rand -hex 24)" ghcr.io/jwklijnsma/docpipe
+#
+# One-off run, like before:
+#   podman run --rm -v $PWD:/work:Z -e DOCPIPE_OLLAMA_URL=http://ollama:11434 \
+#     ghcr.io/jwklijnsma/docpipe run --dir /work/my-role
+#
+# As a systemd service (Podman Quadlet): see deploy/systemd/.
+# Red Hat rebuilds this tag for security fixes; the image is rebuilt on every push.
+# hadolint ignore=DL3007
 FROM registry.access.redhat.com/ubi9/python-311:latest
 
+ARG VERSION=dev
+ARG REVISION=unknown
+LABEL org.opencontainers.image.title="docpipe" \
+      org.opencontainers.image.description="Documentation from Helm charts, Kubernetes, Argo CD, Ansible and Git repos, written by a local Ollama model" \
+      org.opencontainers.image.source="https://github.com/jwklijnsma/docpipe" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
+
 USER 0
-RUN dnf install -y --nodocs git-core && dnf clean all
-USER 1001
+# git: cloning --url sources and page revisions. safe.directory: mounted repos belong to
+# the host user, not to whoever runs in the container.
+# hadolint ignore=DL3041
+RUN dnf install -y --nodocs git-core && dnf clean all \
+ && git config --system --add safe.directory '*' \
+ && mkdir -p /data /repos /work /config \
+ && chgrp -R 0 /data /repos /work /config && chmod -R g=u,o+rwx /data /work
 
 WORKDIR /opt/app-root/src
-COPY pyproject.toml ./
+COPY pyproject.toml README.md ./
 COPY docpipe ./docpipe
-RUN pip install --no-cache-dir .
+# hadolint ignore=DL3013
+RUN pip install --no-cache-dir . && docpipe --version
 
-# OpenShift runs with a random UID in group 0; /work must be group-writable.
+USER 1001
 WORKDIR /work
-ENV PYTHONUNBUFFERED=1
-ENTRYPOINT ["docpipe", "--log-format", "json"]
-CMD ["--help"]
+ENV PYTHONUNBUFFERED=1 \
+    DOCPIPE_CONTAINER=1 \
+    DOCPIPE_OLLAMA_URL=http://host.containers.internal:11434
+
+EXPOSE 8770
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8770/', timeout=4)"]
+# SIGINT lets the web UI cancel running jobs and stop cleanly.
+STOPSIGNAL SIGINT
+ENTRYPOINT ["docpipe"]
+# /config/config.yaml is optional (house rules, glossary, languages); without it the
+# defaults and DOCPIPE_* variables apply.
+CMD ["-c", "/config/config.yaml", "serve", "--root", "/repos", "--bind", "0.0.0.0", "--state-dir", "/data"]

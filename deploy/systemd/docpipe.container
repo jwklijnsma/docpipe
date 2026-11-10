@@ -1,0 +1,58 @@
+# docpipe web UI as a rootless Podman Quadlet (RHEL 9/10, Fedora; Podman >= 4.4).
+#
+#   openssl rand -hex 24 | tr -d '\n' | podman secret create docpipe-token -
+#   mkdir -p ~/.config/containers/systemd ~/.config/docpipe
+#   cp docpipe.container ~/.config/containers/systemd/
+#   install -m 600 docpipe.env.example ~/.config/docpipe/docpipe.env      # Ollama URL, model
+#   # optional: your house rules, glossary and languages in ~/.config/docpipe/config.yaml
+#   systemctl --user daemon-reload
+#   systemctl --user start docpipe
+#   loginctl enable-linger "$USER"                          # keep running without a login
+#   systemctl --user enable --now podman-auto-update.timer  # daily image updates
+#
+# Then open http://localhost:8770/?token=<token>; show the token again with
+#   podman secret inspect --showsecret --format '{{.SecretData}}' docpipe-token
+# Logs: journalctl --user -u docpipe -f
+#
+# As root (/etc/containers/systemd/): use docpipe-rootful.container instead.
+
+[Unit]
+Description=docpipe: documentation from charts, manifests and Ansible, written by a local Ollama model
+Documentation=https://github.com/jwklijnsma/docpipe
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=docpipe
+Image=ghcr.io/jwklijnsma/docpipe:latest
+AutoUpdate=registry
+PublishPort=127.0.0.1:8770:8770
+
+# The repositories to document. Read-only: docpipe never writes into them.
+Volume=%h/git:/repos:ro,z
+# Generated docs, caches, uploads and the model picked in the UI.
+Volume=docpipe-data:/data:U
+# Optional base config (house rules, glossary, languages). Uncomment when the file exists.
+#Volume=%h/.config/docpipe/config.yaml:/config/config.yaml:ro,z
+
+# Runs as you inside the container, so it can read your repositories.
+UserNS=keep-id:uid=1001,gid=1001
+User=1001
+Group=1001
+
+Secret=docpipe-token,type=env,target=DOCPIPE_WEB_TOKEN
+# DOCPIPE_OLLAMA_URL, DOCPIPE_MODEL; `-` = fine if the file is missing.
+EnvironmentFile=-%h/.config/docpipe/docpipe.env
+
+NoNewPrivileges=true
+DropCapability=all
+StopSignal=SIGINT
+StopTimeout=30
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=600
+
+[Install]
+WantedBy=default.target
