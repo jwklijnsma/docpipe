@@ -44,7 +44,7 @@ jobs:
           ref: ${{ inputs.ref }}
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.15"
           cache: pip
       - run: pip install -e ".[test]"
       - run: pytest -q
