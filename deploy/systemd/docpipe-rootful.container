@@ -1,4 +1,5 @@
 # docpipe web UI as a rootful Podman Quadlet (system service, starts at boot).
+# Easiest: `sudo ./install.sh` in this folder does all the steps below (see install.sh --help).
 # For your own user (rootless) use docpipe.container.
 #
 #   openssl rand -hex 24 | tr -d '\n' | sudo podman secret create docpipe-token -

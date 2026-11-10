@@ -1,4 +1,5 @@
 # docpipe web UI as a rootless Podman Quadlet (RHEL 9/10, Fedora; Podman >= 4.4).
+# Easiest: `./install.sh` in this folder does all the steps below (see install.sh --help).
 #
 #   openssl rand -hex 24 | tr -d '\n' | podman secret create docpipe-token -
 #   mkdir -p ~/.config/containers/systemd ~/.config/docpipe
