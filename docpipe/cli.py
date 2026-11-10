@@ -15,6 +15,7 @@ Exit codes: 0 ok, 1 some source failed/has QA issues or publish failed,
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -66,6 +67,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("site", help="write index pages and mkdocs.yml for the local output")
 
+    sv = sub.add_parser("serve", help="start the web UI")
+    sv.add_argument("--root", action="append", metavar="DIR",
+                    help="a source, or a folder of sources, the UI may document (repeatable; default .)")
+    sv.add_argument("--bind", default="127.0.0.1", help="address to listen on (default 127.0.0.1)")
+    sv.add_argument("--port", type=int, default=8770, help="port (default 8770)")
+    sv.add_argument("--token", help="access token (default: $DOCPIPE_WEB_TOKEN or a random one)")
+    sv.add_argument("--no-auth", action="store_true", help="no token (only with a localhost --bind)")
+    sv.add_argument("--open", action="store_true", help="open the UI in a browser")
+    sv.add_argument("--state-dir", metavar="DIR",
+                    help="workspaces, generated docs, uploads, settings (default ~/.cache/docpipe)")
+    sv.add_argument("--max-upload-mb", type=int, default=100, metavar="MB")
+    sv.add_argument("--upload-keep-days", type=float, default=7, metavar="DAYS",
+                    help="delete uploads older than this (default 7, 0 = keep)")
+    sv.add_argument("--no-upload", action="store_true", help="switch ZIP uploads off")
+
     pb = sub.add_parser("publish", help="commit docs to the docs repo and open/update a merge request")
     pb.add_argument("--dry-run", action="store_true", help="prepare the commit but do not push")
     return p
@@ -107,6 +123,19 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(args.log_format, color=False if args.no_color else None,
                   log_file=args.log_file, verbose=args.verbose)
     log = StageLogger()
+
+    if args.cmd == "serve":
+        from docpipe.web import serve
+        if args.ollama:
+            os.environ["DOCPIPE_OLLAMA_URL"] = args.ollama
+        if args.model:
+            os.environ["DOCPIPE_MODEL"] = args.model
+        return serve([Path(r) for r in (args.root or ["."])], config=args.config,
+                     bind=args.bind, port=args.port, token=args.token, no_auth=args.no_auth,
+                     open_browser=args.open, verbose=args.verbose,
+                     state_dir=Path(args.state_dir) if args.state_dir else None,
+                     no_upload=args.no_upload, max_upload_mb=args.max_upload_mb,
+                     upload_keep_days=args.upload_keep_days)
 
     try:
         cfg = load_config(args.config)

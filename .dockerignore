@@ -1,0 +1,7 @@
+# Only pyproject.toml, README.md and docpipe/ go into the image.
+**
+!pyproject.toml
+!README.md
+!docpipe/
+**/__pycache__
+**/*.pyc

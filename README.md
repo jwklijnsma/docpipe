@@ -12,6 +12,45 @@ source ─▶ scan + redact secrets ─▶ cache? ─▶ extract facts ─▶ se
        ─▶ index + mkdocs.yml ─▶ docs repo branch ─▶ merge request
 ```
 
+## Web UI: `docpipe serve`
+
+```bash
+docpipe --ollama http://ollama.example.internal:11434 serve --root ~/git --open
+```
+
+It prints a link with an access token (`http://localhost:8770/?token=…`); open it once and the token becomes a cookie. In the browser:
+
+- every chart, manifest folder, Argo CD repo, Ansible project or other project under `--root` is listed, with its type;
+- **Upload a ZIP** (button or drag and drop) to document something that is not on the server; a GitHub "Download ZIP" works as-is;
+- **Generate docs**: pick the language to write in and the ones to translate to, fast mode, rebuild, or a dry run. Jobs go into a **queue on the server** and keep running when you close the page; the **Jobs** button in the top bar shows progress, the log and a Cancel button, and you get a notification when they finish;
+- **read the docs** in the browser per language, with links between pages, or as Markdown;
+- see the **QA warnings** of the last run;
+- **download** all docs as a ZIP (docs/ + `mkdocs.yml`: unzip and `mkdocs serve`, or copy into your docs repo), or a single page;
+- pick the **model** in the top bar from what your Ollama has.
+
+Each source gets its own workspace in `~/.cache/docpipe` (`--state-dir`) with its cache and pages; the repositories themselves are only read. `-c config.yaml` (house rules, glossary, languages, Ollama endpoints) is used as the base for every run; its `sources` and `publish` sections are ignored here.
+
+Security as in ansreview: it listens on `127.0.0.1` by default, every API call needs the token (`--token` or `$DOCPIPE_WEB_TOKEN`; a placeholder like `change-me` is refused), POSTs need a custom header and the same origin, only folders under `--root` and uploads are reachable, and the Ollama endpoints cannot be changed from the browser. Uploaded ZIPs are unpacked defensively (no paths outside the folder, no symlinks, no `.git`, zip-bomb limits). For remote use prefer an SSH tunnel or a TLS proxy.
+
+### Container and systemd
+
+Every push to `main` publishes `ghcr.io/jwklijnsma/docpipe` (UBI 9, amd64 + arm64); it starts the web UI by default. As a service with Podman Quadlet:
+
+```bash
+openssl rand -hex 24 | tr -d '\n' | podman secret create docpipe-token -
+mkdir -p ~/.config/containers/systemd ~/.config/docpipe
+cp deploy/systemd/docpipe.container ~/.config/containers/systemd/
+install -m 600 deploy/systemd/docpipe.env.example ~/.config/docpipe/docpipe.env   # Ollama URL
+systemctl --user daemon-reload && systemctl --user start docpipe
+loginctl enable-linger "$USER"
+```
+
+As root, use `deploy/systemd/docpipe-rootful.container` (steps in its header). Show the token with `podman secret inspect --showsecret --format '{{.SecretData}}' docpipe-token`. The one-off use still works: `podman run --rm -v $PWD:/work:Z ghcr.io/jwklijnsma/docpipe run --dir /work/my-role`.
+
+### Releasing
+
+`make release` (or **Actions → release → Run workflow**) bumps `__version__`, tags `vX.Y.Z`, creates a GitHub release with the wheel and publishes the image as `:X.Y.Z`, `:X.Y` and `:latest`; `make release-dry-run` rehearses it. `BUMP=minor|major` or `VERSION=X.Y.Z` as in ansreview.
+
 ## Easiest: orchestrator.py
 
 No install needed, only `requests` and `pyyaml`:
@@ -145,14 +184,16 @@ Local filesystem paths never appear in published pages.
 | `docpipe watch [--publish]` | rebuild sources whose GitLab projects changed |
 | `docpipe site` | (re)write index pages + mkdocs.yml locally |
 | `docpipe publish [--dry-run]` | push to docs repo, open/update MR |
+| `docpipe serve [--root DIR…]` | web UI (port 8770): generate, read and download docs |
 
 Exit codes: `0` ok · `1` a source failed, has open QA issues, or publish failed · `2` config/usage · `3` Ollama not usable.
 
 ## Deploy
 
-`deploy/` contains a UBI9 `Containerfile`, an OpenShift `CronJob` (ConfigMap + PVC +
-Secret, runs `watch --publish` at 02:17 Europe/Amsterdam), a systemd service + timer,
-and the docs-repo GitLab CI.
+`deploy/` contains a UBI9 `Containerfile` (web UI by default, published to GHCR), Podman
+Quadlet units for the web UI (`deploy/systemd/`), an OpenShift `CronJob` (ConfigMap + PVC +
+Secret, runs `watch --publish` at 02:17 Europe/Amsterdam), a systemd service + timer for
+`watch`, and the docs-repo GitLab CI.
 
 ## When it's slow
 
@@ -167,6 +208,12 @@ Unchanged sources are skipped by the cache without any LLM call.
 pip install -e '.[test]' mkdocs-material mkdocs-static-i18n && pytest
 ```
 
-37 tests run against an in-process fake Ollama and fake GitLab API, including a
-real `mkdocs build --strict` of a bilingual site and the full merge-request flow
-against a local bare repository.
+The tests run against an in-process fake Ollama and fake GitLab API, including a
+real `mkdocs build --strict` of a bilingual site, the full merge-request flow
+against a local bare repository, and the web UI end to end. `python3 tests/serve_fake_ollama.py`
+starts that fake Ollama on its own, to try the web UI without a GPU.
+
+The web UI is a React app in `web/` (Vite, TypeScript), built into `docpipe/web/static/`,
+which is committed so a normal install needs no Node. After changing `web/src/`, run
+`make web` and commit both; CI fails when they differ. `make web-dev` gives hot reload
+next to `make serve`.

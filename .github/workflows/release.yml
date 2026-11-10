@@ -1,0 +1,228 @@
+name: release
+
+# Actions → release → Run workflow (or `make release` locally, which starts this run).
+#   1. bump      test, bump __version__, commit "release: vX.Y.Z", tag, push to main
+#   2. github    build wheel + sdist, create the GitHub release with generated notes
+#   3. docker    publish ghcr.io/<owner>/docpipe:X.Y.Z, :X.Y, :latest
+# Dry run does all of it except the push, the release and the image push.
+#
+# A vX.Y.Z tag pushed by hand still gets a GitHub release (step 2); its image comes
+# from the docker workflow's own tag trigger.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: Or an exact version X.Y.Z (overrides the bump)
+        type: string
+        required: false
+      dry_run:
+        description: Dry run (build and test everything, publish nothing)
+        type: boolean
+        default: false
+  push:
+    tags: ["v*.*.*"]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      tag: ${{ steps.next.outputs.tag }}
+      # What later jobs build: the new tag, or (dry run) the commit we started from.
+      ref: ${{ inputs.dry_run && github.sha || steps.next.outputs.tag }}
+    steps:
+      - name: Release only from main
+        if: github.ref != 'refs/heads/main' && !inputs.dry_run
+        run: |
+          echo "::error::Releases are cut from main; you started this on ${GITHUB_REF_NAME}. (Dry runs may use any branch.)"
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # all tags, for the "already released" check
+
+      - name: Work out the next version
+        id: next
+        env:
+          BUMP: ${{ inputs.bump }}
+          EXACT: ${{ inputs.version }}
+        run: |
+          python3 - <<'EOF'
+          import os, re, subprocess, sys
+
+          def fail(msg):
+              print(f"::error::{msg}")
+              sys.exit(1)
+
+          src = open("docpipe/__init__.py").read()
+          m = re.search(r'^__version__ = "(\d+)\.(\d+)\.(\d+)"$', src, re.M)
+          if not m:
+              fail("cannot read a X.Y.Z __version__ from docpipe/__init__.py")
+          cur = tuple(map(int, m.groups()))
+          exact = os.environ["EXACT"].strip().removeprefix("v")
+          if exact:
+              if not re.fullmatch(r"\d+\.\d+\.\d+", exact):
+                  fail(f"version must look like 1.2.3, got '{exact}'")
+              new = tuple(map(int, exact.split(".")))
+          else:
+              bump = os.environ["BUMP"]
+              new = {"patch": (cur[0], cur[1], cur[2] + 1),
+                     "minor": (cur[0], cur[1] + 1, 0),
+                     "major": (cur[0] + 1, 0, 0)}[bump]
+          old_s, new_s = ".".join(map(str, cur)), ".".join(map(str, new))
+          if new <= cur:
+              fail(f"{new_s} is not higher than the current {old_s}")
+          tag = f"v{new_s}"
+          tags = subprocess.run(["git", "tag", "-l", tag], capture_output=True, text=True).stdout
+          if tags.strip():
+              fail(f"tag {tag} already exists")
+          print(f"{old_s} -> {new_s}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"current={old_s}\nversion={new_s}\ntag={tag}\n")
+          EOF
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Test
+        run: |
+          pip install -e ".[test]"
+          pytest -q
+
+      - name: Bump, commit and tag
+        env:
+          CURRENT: ${{ steps.next.outputs.current }}
+          VERSION: ${{ steps.next.outputs.version }}
+          TAG: ${{ steps.next.outputs.tag }}
+        run: |
+          set -euo pipefail
+          sed -i "s/^__version__ = \"$CURRENT\"$/__version__ = \"$VERSION\"/" docpipe/__init__.py
+          grep -q "^__version__ = \"$VERSION\"$" docpipe/__init__.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qam "release: $TAG"
+          git tag -a "$TAG" -m "docpipe $VERSION"
+          git show --stat --format='%h %s' HEAD
+
+      - name: Push
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+        # --atomic: the commit and the tag land together or not at all.
+        run: git push --atomic origin "HEAD:${GITHUB_REF_NAME}" "refs/tags/$TAG"
+
+      - name: Summary
+        env:
+          LINE: "${{ steps.next.outputs.current }} → ${{ steps.next.outputs.version }}"
+        run: |
+          if [ "${{ inputs.dry_run }}" = true ]; then
+            echo "### Dry run: $LINE (nothing pushed)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Released $LINE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  github:
+    needs: bump
+    # Runs after a successful bump (also in a dry run), or for a tag pushed by hand.
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.bump.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      REF: ${{ needs.bump.outputs.ref || github.ref_name }}
+      TAG: ${{ needs.bump.outputs.tag || github.ref_name }}
+      DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.REF }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Check the tag matches __version__
+        id: ver
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' docpipe/__init__.py)
+          if [ "$DRY_RUN" = true ]; then
+            # The bump was not pushed, so this checkout still has the old version.
+            version="${TAG#v}"
+          elif [ "v$version" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match __version__ $version in docpipe/__init__.py"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test (tag pushed by hand)
+        if: github.event_name == 'push'
+        run: |
+          pip install -e ".[test]"
+          pytest -q
+
+      - name: Build wheel and sdist
+        run: |
+          pip install build
+          python -m build
+          ls -l dist
+
+      - name: Release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/docpipe
+        run: |
+          set -euo pipefail
+          prev=$(git describe --tags --abbrev=0 --match 'v*.*.*' "HEAD^" 2>/dev/null || true)
+          args=(-f tag_name="$TAG" -f target_commitish="$(git rev-parse HEAD)")
+          [ -n "$prev" ] && args+=(-f previous_tag_name="$prev")
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" "${args[@]}" --jq .body > generated.md
+          {
+            echo "## Install"
+            echo
+            echo '```bash'
+            echo "pip install https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/docpipe-${VERSION}-py3-none-any.whl"
+            echo "docker pull ${IMAGE,,}:${VERSION}"
+            echo '```'
+            echo
+            cat generated.md
+          } > notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create GitHub release
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: gh release create "$TAG" dist/* --verify-tag --title "docpipe $VERSION" --notes-file notes.md
+
+  docker:
+    needs: [bump, github]
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && needs.github.result == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker.yml
+    with:
+      ref: ${{ needs.bump.outputs.ref }}
+      version: ${{ needs.bump.outputs.version }}
+      dry_run: ${{ inputs.dry_run }}

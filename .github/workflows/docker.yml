@@ -1,0 +1,193 @@
+name: docker
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+  # Called by the release workflow: a tag pushed with GITHUB_TOKEN does not start
+  # other workflows, so the release builds its image through this instead.
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref or commit to build
+        type: string
+        required: true
+      version:
+        description: Release version X.Y.Z, tagged as X.Y.Z and X.Y
+        type: string
+        required: false
+      dry_run:
+        description: Build and test, push nothing
+        type: boolean
+        default: false
+
+concurrency:
+  group: docker-${{ inputs.ref || github.ref }}
+  # Never cancel a publish half-way; superseded PR runs can go.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/docpipe
+  PLATFORMS: linux/amd64,linux/arm64
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[test]"
+      - run: pytest -q
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      # The commit actually checked out; github.sha is the caller's when this is called.
+      - id: rev
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=v${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=raw,value=sha-${{ steps.rev.outputs.short }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.rev.outputs.sha }}
+
+      # 1. Build for amd64 only and load it, so the smoke test runs the real image.
+      - name: Build test image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Containerfile
+          platforms: linux/amd64
+          load: true
+          tags: docpipe:test
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ steps.rev.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test - generate docs through the web UI, in the image
+        run: |
+          set -euo pipefail
+          docker run --rm docpipe:test --version
+          # docpipe's own fake Ollama (from the test suite) on the runner
+          pip install -q requests pyyaml
+          nohup python3 tests/serve_fake_ollama.py > "$RUNNER_TEMP/fake.url" 2>&1 &
+          for i in $(seq 20); do [ -s "$RUNNER_TEMP/fake.url" ] && break; sleep 0.5; done
+          OLLAMA="$(head -1 "$RUNNER_TEMP/fake.url")"
+          echo "fake Ollama: $OLLAMA"
+          # a small Helm chart to document
+          mkdir -p "$RUNNER_TEMP/repos/owncast/templates" "$RUNNER_TEMP/data"
+          printf 'apiVersion: v2\nname: owncast\nversion: 0.1.0\nappVersion: "1.0"\ndescription: Streaming\n' > "$RUNNER_TEMP/repos/owncast/Chart.yaml"
+          printf '# -- replicas\nreplicaCount: 1\n' > "$RUNNER_TEMP/repos/owncast/values.yaml"
+          printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: x\n' > "$RUNNER_TEMP/repos/owncast/templates/deployment.yaml"
+          # host network: the fake Ollama only listens on 127.0.0.1
+          docker run -d --name docpipe --network host --user "$(id -u):0" \
+            --health-interval=2s --health-start-period=2s \
+            -e DOCPIPE_WEB_TOKEN=ci-token -e DOCPIPE_OLLAMA_URL="$OLLAMA" \
+            -v "$RUNNER_TEMP/repos:/repos" -v "$RUNNER_TEMP/data:/data" \
+            docpipe:test -c /config/config.yaml serve --root /repos --bind 127.0.0.1 --state-dir /data
+          for i in $(seq 30); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' docpipe)" = healthy ] && break
+            sleep 1
+          done
+          test "$(docker inspect -f '{{.State.Health.Status}}' docpipe)" = healthy
+          API=http://127.0.0.1:8770/api
+          test "$(curl -s -o /dev/null -w '%{http_code}' $API/repos)" = 401
+          H=(-H "Authorization: Bearer ci-token")
+          curl -fsS "${H[@]}" $API/repos | tee /dev/stderr | grep -q '"type": "helm"'
+          JOB=$(curl -fsS "${H[@]}" -H "X-Docpipe: 1" -H "Content-Type: application/json" \
+                -d '{"primary_lang":"nl","langs":["en"]}' "$API/repos/0:owncast/generate" \
+                | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          for i in $(seq 90); do
+            STATUS=$(curl -fsS "${H[@]}" "$API/jobs/$JOB" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+            [ "$STATUS" = queued ] || [ "$STATUS" = running ] || break
+            sleep 1
+          done
+          curl -fsS "${H[@]}" "$API/jobs/$JOB" | python3 -c 'import json,sys; [print(l) for l in json.load(sys.stdin)["lines"][-25:]]'
+          test "$STATUS" = done
+          curl -fsS "${H[@]}" -o "$RUNNER_TEMP/docs.zip" "$API/repos/0:owncast/docs.zip"
+          python3 - "$RUNNER_TEMP/docs.zip" <<'EOF'
+          import sys, zipfile
+          names = zipfile.ZipFile(sys.argv[1]).namelist()
+          print(names)
+          assert "owncast-docs/docs/nl/owncast.md" in names and "owncast-docs/docs/en/owncast.md" in names
+          assert "owncast-docs/mkdocs.yml" in names
+          EOF
+          docker stop -t 15 docpipe
+          test "$(docker inspect -f '{{.State.ExitCode}}' docpipe)" = 0
+
+      - name: Container logs
+        if: always()
+        run: docker logs docpipe 2>&1 || true
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' && !inputs.dry_run
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2. Multi-arch build (amd64 comes from the cache above); pushed except on PRs and dry runs.
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Containerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: ${{ github.event_name != 'pull_request' && !inputs.dry_run }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ steps.rev.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: |
+          {
+            if [ "${{ inputs.dry_run }}" = true ]; then echo "### Dry run: built, not pushed"; else echo "### Published"; fi
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
