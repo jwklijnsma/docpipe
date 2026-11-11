@@ -35,4 +35,35 @@ pages:
   artifacts:
     paths: [public]
   rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"     # schedules are for docpipe-mr below
+      when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Optional: docs previews on merge requests of the SOURCE projects (`docpipe mr`).
+# Add a pipeline schedule to this docs repo (Build > Pipeline schedules, e.g. */15 * * * *).
+# Each run looks at the open merge requests of the projects under `gitlab.projects` in
+# docpipe.yaml and keeps one preview comment per merge request up to date.
+#
+# Commit docpipe.yaml next to this file, with at least:
+#   llm:      {endpoints: [http://ollama.example.internal:11434]}
+#   pipeline: {output_dir: docs, state_dir: .docpipe-state}   # docs/ = the published pages,
+#   gitlab:   {url: https://gitlab.example.nl,                # the baseline for the table diff
+#              projects: [{path: platform/charts, source: owncast}]}
+#   sources:  [...]                                           # each with a url
+# CI/CD variables:
+#   GITLAB_TOKEN       masked; scope api on the source projects (it writes the comment)
+#   DOCPIPE_GIT_TOKEN  masked; read_repository on private source repos
+docpipe-mr:
+  stage: test
+  image:
+    name: ghcr.io/jwklijnsma/docpipe:latest
+    entrypoint: [""]
+  script:
+    - docpipe -c docpipe.yaml --no-color mr --fast
+  cache:                                  # previews and their cache between runs; losing it is
+    key: docpipe-mr-state                 # harmless, the comment remembers the commit
+    paths: [.docpipe-state]
+  resource_group: docpipe-mr              # never two runs at once
+  timeout: 2h
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"

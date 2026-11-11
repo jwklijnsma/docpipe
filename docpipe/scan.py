@@ -118,11 +118,22 @@ def checkout(src: Source, log: StageLogger):
     tmp = Path(tempfile.mkdtemp(prefix="docpipe-"))
     try:
         dest = tmp / "repo"
-        args = ["clone", "--depth", "1", "--quiet"]
-        if src.branch:
-            args += ["--branch", src.branch]
-        log.git("Cloning %s%s...", src.url, f" ({src.branch})" if src.branch else "")
-        git(*args, auth_url(src.url), str(dest))
+        if src.ref:
+            # A ref that is not a branch (a merge request head, a tag): fetch just that commit.
+            # It may be somebody else's code, so a symlink arrives as a text file.
+            log.git("Fetching %s (%s)...", src.url, src.ref)
+            dest.mkdir()
+            git("init", "--quiet", cwd=dest)
+            git("-c", "core.symlinks=false", "fetch", "--depth", "1", "--quiet", "--no-tags",
+                auth_url(src.url), src.ref, cwd=dest)
+            git("-c", "core.symlinks=false", "-c", "advice.detachedHead=false", "checkout",
+                "--quiet", "FETCH_HEAD", cwd=dest)
+        else:
+            args = ["clone", "--depth", "1", "--quiet"]
+            if src.branch:
+                args += ["--branch", src.branch]
+            log.git("Cloning %s%s...", src.url, f" ({src.branch})" if src.branch else "")
+            git(*args, auth_url(src.url), str(dest))
         yield _subdir(dest, src)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

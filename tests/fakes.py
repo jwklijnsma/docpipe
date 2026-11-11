@@ -6,7 +6,7 @@ import json
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 ARTICLE = """# Nginx Panel
 
@@ -175,11 +175,15 @@ class FakeOllama(_Server):
 
 
 class FakeGitLab(_Server):
-    """Implements the three merge-request endpoints docpipe uses."""
+    """The merge-request endpoints docpipe uses: the docs MR for `publish`, and for `mr` the
+    open merge requests of a source project, their changed paths and their notes."""
 
     def __init__(self, token="glpat-test"):
         self.token = token
         self.mrs: list[dict] = []
+        self.open: dict[str, list[dict]] = {}              # project path -> open merge requests
+        self.paths: dict[tuple[str, int], list[str]] = {}  # (project, iid) -> changed paths
+        self.notes: dict[tuple[str, int], list[dict]] = {}
         self.requests: list[tuple[str, str, dict]] = []
         super().__init__(_handler(self))
 
@@ -195,7 +199,16 @@ class FakeGitLab(_Server):
         url = urlparse(h.path)
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         self.requests.append(("GET", url.path, q))
-        if url.path.endswith("/merge_requests"):
+        m = re.fullmatch(r"/api/v4/projects/([^/]+)/merge_requests(?:/(\d+)/(diffs|notes))?", url.path)
+        project = unquote(m.group(1)) if m else ""
+        if m and m.group(3) == "diffs":
+            h.send_json(200, [{"old_path": p, "new_path": p}
+                              for p in self.paths.get((project, int(m.group(2))), [])])
+        elif m and m.group(3) == "notes":
+            h.send_json(200, list(reversed(self.notes.get((project, int(m.group(2))), []))))
+        elif m and "source_branch" not in q:
+            h.send_json(200, self.open.get(project, []))
+        elif url.path.endswith("/merge_requests"):
             h.send_json(200, [m for m in self.mrs if m["state"] == "opened"
                               and m["source_branch"] == q.get("source_branch")])
         else:
@@ -206,6 +219,12 @@ class FakeGitLab(_Server):
             return
         body = h.body()
         self.requests.append(("POST", h.path, body))
+        m = re.fullmatch(r"/api/v4/projects/([^/]+)/merge_requests/(\d+)/notes", h.path)
+        if m:
+            notes = self.notes.setdefault((unquote(m.group(1)), int(m.group(2))), [])
+            note = {"id": 100 + sum(len(v) for v in self.notes.values()), "system": False, **body}
+            notes.append(note)
+            return h.send_json(201, note)
         mr = {**body, "iid": len(self.mrs) + 1, "state": "opened",
               "web_url": f"{self.url}/group/docs/-/merge_requests/{len(self.mrs) + 1}"}
         self.mrs.append(mr)
@@ -216,6 +235,12 @@ class FakeGitLab(_Server):
             return
         body = h.body()
         self.requests.append(("PUT", h.path, body))
+        m = re.fullmatch(r"/api/v4/projects/([^/]+)/merge_requests/(\d+)/notes/(\d+)", h.path)
+        if m:
+            note = next(n for n in self.notes[(unquote(m.group(1)), int(m.group(2)))]
+                        if n["id"] == int(m.group(3)))
+            note.update(body)
+            return h.send_json(200, note)
         iid = int(h.path.rstrip("/").split("/")[-1])
         mr = next(m for m in self.mrs if m["iid"] == iid)
         mr.update(body)

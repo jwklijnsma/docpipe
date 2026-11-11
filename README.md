@@ -164,6 +164,36 @@ Fix content in the source repos or config, not on the MR branch: it is rebuilt e
 
 Tokens: `GITLAB_TOKEN` (api + write_repository on the docs repo, read_api for `watch`),
 `DOCPIPE_GIT_TOKEN` (read_repository on private source repos).
+For `mr`, `GITLAB_TOKEN` also needs `api` on the source projects (it writes the comment).
+
+## Previews on merge requests
+
+`docpipe mr` looks at the open merge requests of the projects under `gitlab.projects`. For each
+new commit it writes the page from the merge request's own code and keeps **one comment** on
+the merge request up to date:
+
+- the rows that change in the reference tables (values, resources, variables), compared with
+  the published page;
+- the whole new page, folded, to read before merging;
+- QA warnings under "Needs attention".
+
+Nothing is published and your output folder is not touched: previews are built under
+`state_dir/mr/`. After the merge, `watch --publish` delivers the real page as before.
+
+```bash
+docpipe mr --dry-run          # which merge requests would get a preview
+docpipe mr --fast             # one round, then exit (timer, CronJob)
+docpipe mr --interval 300     # keep running, look every 5 minutes
+```
+
+- It polls, so only outgoing calls to GitLab are needed; no webhook.
+- A source needs a `url` (a local `path` has no merge requests). With a `subdir`, only merge
+  requests that touch that folder get a preview.
+- Each commit is previewed once and only in the language the pages are written in. A commit
+  that fails is tried three times.
+- `GITLAB_TOKEN` needs the `api` scope on the source projects to comment.
+- `deploy/docs-repo.gitlab-ci.yml` has a `docpipe-mr` job for a pipeline schedule in the docs repo;
+  `deploy/docpipe-mr.service` runs it as a service.
 
 ## Secrets
 
@@ -183,6 +213,7 @@ Local filesystem paths never appear in published pages.
 | `  --fast` / `--force` / `--dry-run` / `--publish` | speed / ignore cache / no LLM calls / open MR |
 | `docpipe check` | endpoints, models, tok/s, % of model in VRAM |
 | `docpipe watch [--publish]` | rebuild sources whose GitLab projects changed |
+| `docpipe mr [--interval N]` | docs preview as a comment on open merge requests |
 | `docpipe site` | (re)write index pages + mkdocs.yml locally |
 | `docpipe publish [--dry-run]` | push to docs repo, open/update MR |
 | `docpipe serve [--root DIR…]` | web UI (port 8770): generate, read and download docs |
@@ -194,7 +225,7 @@ Exit codes: `0` ok · `1` a source failed, has open QA issues, or publish failed
 `deploy/` contains a UBI9 `Containerfile` (web UI by default, published to GHCR), Podman
 Quadlet units for the web UI (`deploy/systemd/`), an OpenShift `CronJob` (ConfigMap + PVC +
 Secret, runs `watch --publish` at 02:17 Europe/Amsterdam), a systemd service + timer for
-`watch`, and the docs-repo GitLab CI.
+`watch`, a systemd service for `mr` (`docpipe-mr.service`), and the docs-repo GitLab CI.
 
 ## When it's slow
 

@@ -102,3 +102,6 @@ gitlab:
     - {path: platform/charts, source: owncast}
     - {path: team-shop/webshop-deploy, source: webshop}
     - {path: platform/gitops, source: platform-apps}
+  # `docpipe mr`: a docs preview as a comment on every open merge request of these projects
+  mr_skip_drafts: false
+  mr_max_age_days: 14                 # leave merge requests alone that nobody touched for this long
