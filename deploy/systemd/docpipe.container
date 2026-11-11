@@ -1,10 +1,12 @@
 # docpipe web UI as a rootless Podman Quadlet (RHEL 9/10, Fedora; Podman >= 4.4).
+# ROOTLESS ONLY: put it in ~/.config/containers/systemd/, never in /etc/containers/systemd/.
+# As root it fails with exit 125 ("ID-mapped copy of layer"); use docpipe-rootful.container there.
 # Easiest: `./install.sh` in this folder does all the steps below (see install.sh --help).
 #
 #   openssl rand -hex 24 | tr -d '\n' | podman secret create docpipe-token -
 #   mkdir -p ~/.config/containers/systemd ~/.config/docpipe
 #   cp docpipe.container ~/.config/containers/systemd/
-#   install -m 600 docpipe.env.example ~/.config/docpipe/docpipe.env      # Ollama URL, model
+#   install -m 600 docpipe.env.example ~/.config/docpipe/docpipe.env      # required: Ollama URL, model
 #   # optional: your house rules, glossary and languages in ~/.config/docpipe/config.yaml
 #   systemctl --user daemon-reload
 #   systemctl --user start docpipe
@@ -43,7 +45,9 @@ Group=1001
 
 Secret=docpipe-token,type=env,target=DOCPIPE_WEB_TOKEN
 # DOCPIPE_OLLAMA_URL, DOCPIPE_MODEL; `-` = fine if the file is missing.
-EnvironmentFile=-%h/.config/docpipe/docpipe.env
+# Settings (model, Ollama URL, ...). The file must exist: Quadlet hands this path to
+# `podman --env-file`, which has no "optional" form. An unchanged copy of the example is fine.
+EnvironmentFile=%h/.config/docpipe/docpipe.env
 
 NoNewPrivileges=true
 DropCapability=all
