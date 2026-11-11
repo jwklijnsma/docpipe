@@ -1,0 +1,19 @@
+# Docs previews on merge requests (`docpipe mr`), as a service that keeps looking.
+# Install to /etc/systemd/system/, then:
+#   systemctl daemon-reload && systemctl enable --now docpipe-mr.service
+[Unit]
+Description=docpipe: docs previews on GitLab merge requests
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=docpipe
+WorkingDirectory=/opt/docpipe
+# /etc/docpipe/env contains GITLAB_TOKEN=... (api) and DOCPIPE_GIT_TOKEN=...
+EnvironmentFile=/etc/docpipe/env
+ExecStart=/opt/docpipe/.venv/bin/docpipe -c /opt/docpipe/config.yaml --no-color mr --fast --interval 300
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

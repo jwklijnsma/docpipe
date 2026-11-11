@@ -108,6 +108,7 @@ class Source:
     url: str | None = None
     path: str | None = None
     branch: str | None = None
+    ref: str | None = None                   # any git ref instead of a branch, e.g. refs/tags/v1.2
     subdir: str | None = None                # chart/app inside a monorepo
     output: str | None = None                # path under docs/<lang>/, e.g. apps/owncast.md
     context: str = ""                        # extra facts for this source only
@@ -138,6 +139,9 @@ class GitLabConfig:
     lookback_hours: int = 24
     branches: list[str] = field(default_factory=lambda: ["master", "main"])
     projects: list[dict] = field(default_factory=list)   # [{path, source}]
+    # `docpipe mr`: docs previews as a comment on open merge requests of these projects
+    mr_skip_drafts: bool = False
+    mr_max_age_days: int = 14                # ignore merge requests not updated for this long (0 = off)
 
 
 @dataclass

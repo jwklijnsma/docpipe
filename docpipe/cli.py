@@ -5,6 +5,7 @@ Command line:
                    [--force] [--dry-run] [--publish]
   docpipe check    [--no-bench]
   docpipe watch    [--dry-run] [--publish]
+  docpipe mr       [--dry-run] [--fast] [--force] [--interval SECONDS]   docs previews on merge requests
   docpipe site     write index pages + mkdocs.yml for the local output
   docpipe publish  [--dry-run]   commit docs to the docs repo and open/update a merge request
 
@@ -64,6 +65,13 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--dry-run", action="store_true", help="only list what would be rebuilt")
     w.add_argument("--fast", action="store_true")
     w.add_argument("--publish", action="store_true", help="publish to the docs repo afterwards")
+
+    m = sub.add_parser("mr", help="comment a docs preview on open merge requests of the GitLab projects")
+    m.add_argument("--dry-run", action="store_true", help="only list the merge requests that would get one")
+    m.add_argument("--fast", action="store_true", help="priority files only, 1 QA round")
+    m.add_argument("--force", action="store_true", help="preview again, also commits already done")
+    m.add_argument("--interval", type=int, metavar="SECONDS",
+                   help="keep running and look again every SECONDS (default: one round, then exit)")
 
     sub.add_parser("site", help="write index pages and mkdocs.yml for the local output")
 
@@ -167,6 +175,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "watch":
         return _watch(args, cfg, llm, log)
 
+    if args.cmd == "mr":
+        return _mr(args, cfg, llm, log)
+
     # ---- run ---------------------------------------------------------------------
     if args.primary_lang:
         cfg.pipeline.primary_language = args.primary_lang
@@ -205,6 +216,30 @@ def main(argv: list[str] | None = None) -> int:
     if any(r.status != "failed" for r in results):
         rc = max(rc, _after_run(cfg, log, args.publish))
     return rc
+
+
+def _mr(args, cfg, llm: LLM, log: StageLogger) -> int:
+    import time
+
+    from docpipe import mr
+
+    def once() -> int:
+        try:
+            return mr.poll(cfg, llm, log, fast=args.fast, force=args.force, dry_run=args.dry_run,
+                           preflight=lambda: _preflight(llm, log))
+        except ModelMissing as exc:
+            log.error("%s", exc)
+            return 3
+
+    if not args.interval or args.dry_run:
+        return once()
+    log.info("Looking for merge requests every %ds (Ctrl-C stops)", max(30, args.interval))
+    try:
+        while True:
+            once()                # a bad round is logged; the next one starts fresh
+            time.sleep(max(30, args.interval))
+    except KeyboardInterrupt:
+        return 0
 
 
 def _watch(args, cfg, llm: LLM, log: StageLogger) -> int:
