@@ -15,3 +15,6 @@ config.yaml
 
 # web UI (React); the built bundle in docpipe/web/static/ IS committed
 web/node_modules/
+
+# docs site (zensical build) - the site output goes to /site/ (ignored above)
+.cache/
