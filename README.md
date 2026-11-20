@@ -17,6 +17,8 @@ source ─▶ scan + redact secrets ─▶ cache? ─▶ extract facts ─▶ se
        ─▶ index + mkdocs.yml ─▶ docs repo branch ─▶ merge request
 ```
 
+![The docpipe web UI: a generated page in Dutch](documentation/assets/screenshots/docs-nl.png)
+
 ## Features
 
 - **Five source types**, detected automatically: `helm`, `k8s`, `argocd`, `ansible`,
@@ -33,6 +35,18 @@ source ─▶ scan + redact secrets ─▶ cache? ─▶ extract facts ─▶ se
 - **Web UI** (`docpipe serve`): generate, read and download docs in the browser, with a job
   queue on the server.
 - **Secrets are redacted** before anything reaches the model.
+
+<details>
+<summary>More screenshots</summary>
+
+| | |
+|---|---|
+| ![Options](documentation/assets/screenshots/options.png) | ![Reference table](documentation/assets/screenshots/docs-values.png) |
+| Write in Dutch, also translate to English | The values table from values.yaml, rendered in code; the password is redacted |
+| ![English](documentation/assets/screenshots/docs-en.png) | ![Run & QA](documentation/assets/screenshots/run-qa.png) |
+| The same page in English | The last run: QA warnings and pages written |
+
+</details>
 
 ## Quick start
 
