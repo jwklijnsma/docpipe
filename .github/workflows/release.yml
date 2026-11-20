@@ -6,6 +6,9 @@ name: release
 #   3. docker    publish ghcr.io/<owner>/docpipe:X.Y.Z, :X.Y, :latest
 # Dry run does all of it except the push, the release and the image push.
 #
+# auto-release.yml starts this after a merged PR and weekly, with only_if_changed:
+# then nothing happens when main has no commits since the last tag.
+#
 # A vX.Y.Z tag pushed by hand still gets a GitHub release (step 2); its image comes
 # from the docker workflow's own tag trigger.
 on:
@@ -24,6 +27,10 @@ on:
         description: Dry run (build and test everything, publish nothing)
         type: boolean
         default: false
+      only_if_changed:
+        description: Skip when main has no commits since the last release (auto-release)
+        type: boolean
+        default: false
   push:
     tags: ["v*.*.*"]
 
@@ -35,8 +42,37 @@ permissions:
   contents: read
 
 jobs:
-  bump:
+  changes:
     if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.count.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The branch tip when the job starts, not when the run was queued: runs can
+          # wait for each other (concurrency), and an earlier one may have released.
+          ref: ${{ !inputs.dry_run && github.ref_name || '' }}
+          fetch-depth: 0
+
+      - name: Anything new since the last release?
+        id: count
+        env:
+          ONLY_IF_CHANGED: ${{ inputs.only_if_changed }}
+        run: |
+          last=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
+          new=$(git log --format=%s ${last:+"$last..HEAD"} | grep -vc '^release: ' || true)
+          echo "Last release: ${last:-none}; commits since: $new" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$ONLY_IF_CHANGED" = true ] && [ "$new" -eq 0 ]; then
+            echo "Nothing to release." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  bump:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' && needs.changes.outputs.skip != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -54,6 +90,7 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
+          ref: ${{ !inputs.dry_run && github.ref_name || '' }}   # see the changes job
           fetch-depth: 0   # all tags, for the "already released" check
 
       - name: Work out the next version
