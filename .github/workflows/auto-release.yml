@@ -27,6 +27,7 @@ jobs:
       github.event_name != 'pull_request'
       || (github.event.pull_request.merged
           && !endsWith(github.event.pull_request.user.login, '[bot]')
+          && !startsWith(github.event.pull_request.head.ref, 'renovate/')
           && !contains(github.event.pull_request.labels.*.name, 'no-release'))
     runs-on: ubuntu-latest
     permissions:

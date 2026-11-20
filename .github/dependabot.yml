@@ -1,8 +1,0 @@
-version: 2
-updates:
-  - package-ecosystem: pip
-    directory: /
-    allow:
-      - dependency-name: zensical   # requirements-docs.txt (the docs site)
-    schedule:
-      interval: weekly

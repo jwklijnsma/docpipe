@@ -2,7 +2,9 @@ name: automerge
 
 # Merges dependency PRs from Renovate and Dependabot on their own once every other
 # check on the PR has passed. Only patch and minor updates (for 0.x versions: only
-# patch updates); majors stay open for a person to review.
+# patch updates); majors stay open for a person to review. Renovate PRs are also
+# recognised by their renovate/ branch, since renovate.yml opens them with a
+# personal token (so not as renovate[bot]).
 #
 # Opt out for one PR: add the label "no-automerge", or mark it as a draft.
 #
@@ -25,7 +27,8 @@ permissions:
 jobs:
   automerge:
     if: >-
-      contains(fromJSON('["renovate[bot]","dependabot[bot]"]'), github.event.pull_request.user.login)
+      (contains(fromJSON('["renovate[bot]","dependabot[bot]"]'), github.event.pull_request.user.login)
+       || startsWith(github.event.pull_request.head.ref, 'renovate/'))
       && github.event.pull_request.head.repo.full_name == github.repository
       && !github.event.pull_request.draft
       && !contains(github.event.pull_request.labels.*.name, 'no-automerge')
