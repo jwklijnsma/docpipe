@@ -32,6 +32,8 @@ the model.
 
 </div>
 
+[![The docpipe web UI: a generated page in Dutch](assets/screenshots/docs-nl.png){ loading=lazy }](assets/screenshots/docs-nl.png)
+
 ## The pipeline
 
 ```mermaid

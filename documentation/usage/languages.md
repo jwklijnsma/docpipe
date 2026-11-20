@@ -19,6 +19,8 @@ pipeline:
 On the command line: `--primary-lang nl --lang en` (repeat `--lang` for more
 targets), or `--no-translate` to skip the translations from the config.
 
+[![A page written in Dutch, with an English translation](../assets/screenshots/docs-nl.png){ loading=lazy }](../assets/screenshots/docs-nl.png)
+
 ## Dutch
 
 - `primary_language: nl` writes in Dutch from the start, or translate to it with

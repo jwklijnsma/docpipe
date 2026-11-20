@@ -7,6 +7,8 @@ docpipe --ollama http://ollama.example.internal:11434 serve --root ~/git --open
 It prints a link with an access token (`http://localhost:8770/?token=…`); open
 it once and the token becomes a cookie.
 
+[![The docpipe web UI: a generated page in Dutch](../assets/screenshots/docs-nl.png){ loading=lazy }](../assets/screenshots/docs-nl.png)
+
 ## What you can do
 
 - **See every source** under `--root`: every chart, manifest folder, Argo CD
@@ -24,6 +26,22 @@ it once and the token becomes a cookie.
 - **Download** all docs as a ZIP (`docs/` + `mkdocs.yml`: unzip and
   `mkdocs serve`, or copy into your docs repo), or a single page.
 - Pick the **model** in the top bar from what your Ollama has.
+
+=== "Options"
+
+    [![Options: write in Dutch, also translate to English](../assets/screenshots/options.png){ loading=lazy }](../assets/screenshots/options.png)
+
+=== "Reference table"
+
+    [![The values table, rendered from values.yaml; the password is redacted](../assets/screenshots/docs-values.png){ loading=lazy }](../assets/screenshots/docs-values.png)
+
+=== "English"
+
+    [![The same page, translated to English](../assets/screenshots/docs-en.png){ loading=lazy }](../assets/screenshots/docs-en.png)
+
+=== "Run & QA"
+
+    [![The last run: result, QA warnings and the pages written](../assets/screenshots/run-qa.png){ loading=lazy }](../assets/screenshots/run-qa.png)
 
 ## Workspaces and config
 
