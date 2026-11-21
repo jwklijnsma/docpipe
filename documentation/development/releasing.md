@@ -40,3 +40,25 @@ release:
 Label a pull request `no-release` to keep its merge from starting a release; it
 still goes out with the next one. You can always start a release by hand as
 above, and `auto-release` can also be started from the Actions tab.
+
+## Dependency updates
+
+Renovate runs in this repository's own GitHub Actions (`renovate.yml`) every 4
+hours, and from **Actions › renovate › Run workflow**. `renovate.json` sets what it
+updates: Python packages, the web UI's npm packages (minor and patch bumps in one
+PR), GitHub Actions (likewise), the container base image, versions pinned in the
+Dockerfile with a `# renovate:` comment, and the docs site's
+`requirements-docs.txt`. A **Dependency Dashboard** issue lists everything it
+knows about, including majors it is waiting on.
+
+`automerge.yml` merges patch and minor updates once every other check has passed;
+majors stay open for you. Merged updates go out with the weekly release.
+
+One-time setup: create a
+[fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
+for this repository, with **Contents**, **Pull requests**, **Issues** and
+**Workflows** set to *Read and write*, and save it as the Actions secret
+`RENOVATE_TOKEN`. `GITHUB_TOKEN` can't be used: pull requests it opens start no
+checks, so they would never be merged automatically. The pull requests are opened
+under your account, on `renovate/…` branches; the workflows recognise them by that
+branch name.
