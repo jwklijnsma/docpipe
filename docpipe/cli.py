@@ -98,6 +98,8 @@ def build_parser() -> argparse.ArgumentParser:
 def _adhoc_source(args) -> Source:
     if args.dir:
         path = Path(args.dir).expanduser().resolve()
+        if not path.is_dir():
+            raise FileNotFoundError(f"--dir {args.dir}: no such directory")
         name = args.name or (Path(args.subdir).name if args.subdir else path.name)
         return Source(name=name, type=args.type, path=str(path), subdir=args.subdir, output=args.output)
     repo = args.url.rstrip("/").split("/")[-1].removesuffix(".git")
